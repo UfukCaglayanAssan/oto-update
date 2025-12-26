@@ -13,7 +13,8 @@ import os
 
 # UART ayarları
 BAUD_RATE = 115200  # İhtiyaca göre değiştirilebilir (9600, 19200, 38400, 57600, 115200)
-TIMEOUT = 1  # Okuma timeout'u (saniye)
+TIMEOUT = 2  # Okuma timeout'u (saniye)
+WRITE_TIMEOUT = None  # Yazma timeout'u (None = sınırsız, saniye cinsinden)
 WAIT_TIME = 10  # Script başladıktan sonra bekleme süresi (saniye)
 PACKET_SIZE = 256  # Her paketteki byte sayısı (ayarlanabilir: 64, 128, 256, 512)
 
@@ -38,16 +39,16 @@ def open_serial_port(port_name=None, baud_rate=BAUD_RATE):
             common_ports = ['/dev/ttyUSB0', '/dev/ttyAMA0', '/dev/ttyS0', '/dev/ttyACM0']
             for port in common_ports:
                 try:
-                    ser = serial.Serial(port, baud_rate, timeout=TIMEOUT, write_timeout=TIMEOUT,
-                                      rtscts=False, dsrdtr=False)  # Hardware flow control kapalı
+                    ser = serial.Serial(port, baud_rate, timeout=TIMEOUT, write_timeout=WRITE_TIMEOUT,
+                                      rtscts=False, dsrdtr=False, xonxoff=False)  # Tüm flow control kapalı
                     print(f"Port açıldı: {port}")
                     return ser
                 except serial.SerialException:
                     continue
             raise serial.SerialException("Uygun port bulunamadı")
         else:
-            ser = serial.Serial(port_name, baud_rate, timeout=TIMEOUT, write_timeout=TIMEOUT,
-                              rtscts=False, dsrdtr=False)  # Hardware flow control kapalı
+            ser = serial.Serial(port_name, baud_rate, timeout=TIMEOUT, write_timeout=WRITE_TIMEOUT,
+                              rtscts=False, dsrdtr=False, xonxoff=False)  # Tüm flow control kapalı
             print(f"Port açıldı: {port_name}")
             return ser
     except serial.SerialException as e:
@@ -103,12 +104,34 @@ def send_packet(ser, packet_data, packet_number, total_packets):
         packet.append(checksum)
         
         print(f"  Paket oluşturuldu: {len(packet)} byte")
+        
+        # Output buffer kontrolü
+        if ser.out_waiting > 0:
+            print(f"  Uyarı: Output buffer'da {ser.out_waiting} byte bekliyor, temizleniyor...")
+            ser.reset_output_buffer()
+            time.sleep(0.1)
+        
         print(f"  Yazma işlemi başlıyor...")
         
-        # Paketi gönder
+        # Paketi gönder (küçük parçalar halinde gönder, timeout'u önle)
         try:
-            bytes_written = ser.write(packet)
-            print(f"  {bytes_written} byte yazıldı")
+            # Paketi küçük parçalara böl (64 byte'lık)
+            chunk_size = 64
+            total_written = 0
+            
+            for i in range(0, len(packet), chunk_size):
+                chunk = packet[i:i+chunk_size]
+                bytes_written = ser.write(chunk)
+                total_written += bytes_written
+                ser.flush()  # Her chunk'tan sonra flush
+                time.sleep(0.001)  # Kısa bekleme
+            
+            print(f"  {total_written}/{len(packet)} byte yazıldı")
+            
+            if total_written != len(packet):
+                print(f"  ⚠ Uyarı: Tüm paket yazılamadı!")
+                return False
+                
         except Exception as e:
             print(f"  Yazma hatası: {e}")
             raise
