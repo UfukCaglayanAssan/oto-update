@@ -71,7 +71,7 @@ def send_packet(ser, packet_data, packet_number, total_packets):
     """Tek bir paketi UART üzerinden gönderir"""
     try:
         # Paket başlığı oluştur (isteğe göre özelleştirilebilir)
-        # Format: [START_BYTE, PACKET_NUM_H, PACKET_NUM_L, DATA_SIZE, DATA..., CHECKSUM]
+        # Format: [START_BYTE, PACKET_NUM_H, PACKET_NUM_L, DATA_SIZE_H, DATA_SIZE_L, DATA..., CHECKSUM]
         START_BYTE = 0xAA  # Paket başlangıç byte'ı
         packet_size = len(packet_data)
         
@@ -79,8 +79,12 @@ def send_packet(ser, packet_data, packet_number, total_packets):
         packet_num_high = (packet_number >> 8) & 0xFF
         packet_num_low = packet_number & 0xFF
         
-        # Paket oluştur: [START, PACKET_NUM_H, PACKET_NUM_L, SIZE, DATA...]
-        packet = bytearray([START_BYTE, packet_num_high, packet_num_low, packet_size])
+        # Paket boyutunu 2 byte olarak ayır (256 ve üzeri değerler için)
+        packet_size_high = (packet_size >> 8) & 0xFF
+        packet_size_low = packet_size & 0xFF
+        
+        # Paket oluştur: [START, PACKET_NUM_H, PACKET_NUM_L, SIZE_H, SIZE_L, DATA...]
+        packet = bytearray([START_BYTE, packet_num_high, packet_num_low, packet_size_high, packet_size_low])
         packet.extend(packet_data)
         
         # Checksum ekle
@@ -91,7 +95,7 @@ def send_packet(ser, packet_data, packet_number, total_packets):
         ser.write(packet)
         ser.flush()  # Tüm verinin gönderildiğinden emin ol
         
-        print(f"Paket {packet_number}/{total_packets} gönderildi - Boyut: {len(packet)} byte")
+        print(f"Paket {packet_number}/{total_packets} gönderildi - Veri boyutu: {packet_size} byte, Toplam paket: {len(packet)} byte")
         
         # Kısa bir bekleme (bootloader'ın paketi işlemesi için)
         time.sleep(0.01)
