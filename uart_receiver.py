@@ -17,6 +17,11 @@ TIMEOUT = 1  # Okuma timeout'u (saniye)
 WAIT_TIME = 10  # Script başladıktan sonra bekleme süresi (saniye)
 PACKET_SIZE = 256  # Her paketteki byte sayısı (ayarlanabilir: 64, 128, 256, 512)
 
+# Bootloader komutları
+CMD_BOOTLOADER_ENTER = 0x55  # Bootloader moduna geçiş komutu
+CMD_BOOTLOADER_ACK = 0xAA    # Bootloader yanıt komutu
+CMD_START_UPDATE = 0x5A       # Güncelleme başlatma komutu
+
 def find_serial_ports():
     """Mevcut serial portları listeler"""
     ports = serial.tools.list_ports.comports()
@@ -33,14 +38,16 @@ def open_serial_port(port_name=None, baud_rate=BAUD_RATE):
             common_ports = ['/dev/ttyUSB0', '/dev/ttyAMA0', '/dev/ttyS0', '/dev/ttyACM0']
             for port in common_ports:
                 try:
-                    ser = serial.Serial(port, baud_rate, timeout=TIMEOUT)
+                    ser = serial.Serial(port, baud_rate, timeout=TIMEOUT, write_timeout=TIMEOUT,
+                                      rtscts=False, dsrdtr=False)  # Hardware flow control kapalı
                     print(f"Port açıldı: {port}")
                     return ser
                 except serial.SerialException:
                     continue
             raise serial.SerialException("Uygun port bulunamadı")
         else:
-            ser = serial.Serial(port_name, baud_rate, timeout=TIMEOUT)
+            ser = serial.Serial(port_name, baud_rate, timeout=TIMEOUT, write_timeout=TIMEOUT,
+                              rtscts=False, dsrdtr=False)  # Hardware flow control kapalı
             print(f"Port açıldı: {port_name}")
             return ser
     except serial.SerialException as e:
@@ -95,9 +102,31 @@ def send_packet(ser, packet_data, packet_number, total_packets):
         checksum = calculate_checksum(packet)
         packet.append(checksum)
         
+        print(f"  Paket oluşturuldu: {len(packet)} byte")
+        print(f"  Yazma işlemi başlıyor...")
+        
         # Paketi gönder
-        bytes_written = ser.write(packet)
-        ser.flush()  # Tüm verinin gönderildiğinden emin ol
+        try:
+            bytes_written = ser.write(packet)
+            print(f"  {bytes_written} byte yazıldı")
+        except Exception as e:
+            print(f"  Yazma hatası: {e}")
+            raise
+        
+        print(f"  Flush işlemi başlıyor...")
+        try:
+            # Output buffer'ın boşalmasını bekle
+            start_time = time.time()
+            while ser.out_waiting > 0:
+                if time.time() - start_time > TIMEOUT:
+                    print(f"  Uyarı: Flush timeout! Kalan: {ser.out_waiting} byte")
+                    break
+                time.sleep(0.001)
+            ser.flush()
+            print(f"  Flush tamamlandı (kalan buffer: {ser.out_waiting} byte)")
+        except Exception as e:
+            print(f"  Flush hatası: {e}")
+            # Flush hatası kritik değil, devam et
         
         if bytes_written != len(packet):
             print(f"Uyarı: Paket {packet_number} tam gönderilmedi! ({bytes_written}/{len(packet)} byte)")
@@ -114,11 +143,48 @@ def send_packet(ser, packet_data, packet_number, total_packets):
         traceback.print_exc()
         return False
 
+def send_handshake(ser):
+    """Bootloader'a handshake paketi gönderir ve yanıt bekler"""
+    print("Handshake paketi gönderiliyor...")
+    
+    # Handshake paketi: [CMD_BOOTLOADER_ENTER, CMD_START_UPDATE]
+    handshake = bytearray([CMD_BOOTLOADER_ENTER, CMD_START_UPDATE])
+    
+    try:
+        ser.write(handshake)
+        ser.flush()
+        print(f"Handshake gönderildi: {handshake.hex()}")
+        
+        # Yanıt bekle (opsiyonel - timeout ile)
+        time.sleep(0.1)  # Karşı tarafın yanıt vermesi için bekle
+        
+        if ser.in_waiting > 0:
+            response = ser.read(ser.in_waiting)
+            print(f"Yanıt alındı: {response.hex()}")
+            if CMD_BOOTLOADER_ACK in response:
+                print("✓ Bootloader hazır!")
+                return True
+            else:
+                print("⚠ Beklenmeyen yanıt, devam ediliyor...")
+                return True  # Yanıt olmasa bile devam et
+        else:
+            print("⚠ Yanıt alınamadı, devam ediliyor...")
+            return True  # Yanıt olmasa bile devam et
+            
+    except Exception as e:
+        print(f"Handshake hatası: {e}, devam ediliyor...")
+        return True  # Hata olsa bile devam et
+
 def send_bootloader_file(ser, bin_data):
     """Binary dosyayı paket paket UART üzerinden gönderir"""
     print("\n" + "=" * 50)
     print("Bootloader Güncelleme Başlatılıyor...")
     print("=" * 50)
+    
+    # Önce handshake gönder
+    send_handshake(ser)
+    time.sleep(0.2)  # Bootloader'ın hazır olması için bekle
+    print()
     
     total_size = len(bin_data)
     total_packets = (total_size + PACKET_SIZE - 1) // PACKET_SIZE  # Yuvarlama yukarı
