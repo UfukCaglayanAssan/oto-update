@@ -134,7 +134,12 @@ def send_packet(ser, packet_data, packet_number, total_packets):
         print(f"Paket {packet_number}/{total_packets} gönderildi - Veri boyutu: {packet_size} byte, Toplam paket: {len(packet)} byte")
         
         # Kısa bir bekleme (bootloader'ın paketi işlemesi için)
-        time.sleep(0.01)
+        time.sleep(0.05)  # Biraz daha uzun bekle
+        
+        # Karşı taraftan yanıt var mı kontrol et
+        if ser.in_waiting > 0:
+            response = ser.read(ser.in_waiting)
+            print(f"  → Karşı taraftan yanıt: {response.hex()}")
         
         return True
     except Exception as e:
@@ -147,6 +152,11 @@ def send_handshake(ser):
     """Bootloader'a handshake paketi gönderir ve yanıt bekler"""
     print("Handshake paketi gönderiliyor...")
     
+    # Buffer'ı temizle
+    ser.reset_input_buffer()
+    ser.reset_output_buffer()
+    time.sleep(0.1)
+    
     # Handshake paketi: [CMD_BOOTLOADER_ENTER, CMD_START_UPDATE]
     handshake = bytearray([CMD_BOOTLOADER_ENTER, CMD_START_UPDATE])
     
@@ -155,21 +165,30 @@ def send_handshake(ser):
         ser.flush()
         print(f"Handshake gönderildi: {handshake.hex()}")
         
-        # Yanıt bekle (opsiyonel - timeout ile)
-        time.sleep(0.1)  # Karşı tarafın yanıt vermesi için bekle
+        # Yanıt bekle (daha uzun süre)
+        print("Yanıt bekleniyor (2 saniye)...")
+        time.sleep(2)  # Daha uzun bekle
         
         if ser.in_waiting > 0:
             response = ser.read(ser.in_waiting)
-            print(f"Yanıt alındı: {response.hex()}")
+            print(f"✓ Yanıt alındı: {response.hex()}")
             if CMD_BOOTLOADER_ACK in response:
-                print("✓ Bootloader hazır!")
+                print("✓✓✓ Bootloader hazır ve yanıt veriyor! ✓✓✓")
                 return True
             else:
-                print("⚠ Beklenmeyen yanıt, devam ediliyor...")
+                print(f"⚠ Beklenmeyen yanıt: {response.hex()}")
+                print("  (Bazı bootloader'lar farklı yanıt verebilir, devam ediliyor...)")
                 return True  # Yanıt olmasa bile devam et
         else:
-            print("⚠ Yanıt alınamadı, devam ediliyor...")
-            return True  # Yanıt olmasa bile devam et
+            print("⚠⚠⚠ YANIT ALINAMADI ⚠⚠⚠")
+            print("  → Muhtemel nedenler:")
+            print("     1. Bootloader yüklü değil (ICP Tool ile yükleyin)")
+            print("     2. Bootloader modunda değil (reset sonrası belirli süre bekleyin)")
+            print("     3. UART pinleri yanlış")
+            print("     4. Baud rate farklı")
+            print("  → Paketler gönderilecek ama kart işlemeyebilir!")
+            print("  → Devam ediliyor... (test amaçlı)")
+            return True  # Yanıt olmasa bile devam et (test için)
             
     except Exception as e:
         print(f"Handshake hatası: {e}, devam ediliyor...")
@@ -216,7 +235,15 @@ def send_bootloader_file(ser, bin_data):
         
         sent_bytes += len(packet_data)
         progress = (sent_bytes / total_size) * 100
-        print(f"İlerleme: {progress:.1f}% ({sent_bytes}/{total_size} byte)\n")
+        print(f"İlerleme: {progress:.1f}% ({sent_bytes}/{total_size} byte)")
+        
+        # Her 5 pakette bir karşı taraftan gelen verileri kontrol et
+        if packet_num % 5 == 0:
+            time.sleep(0.1)
+            if ser.in_waiting > 0:
+                response = ser.read(ser.in_waiting)
+                print(f"  [Ara kontrol] Karşı taraftan: {response.hex()}")
+        print()
     
     print("\n" + "=" * 50)
     print("Tüm paketler başarıyla gönderildi!")
