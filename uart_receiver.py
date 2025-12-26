@@ -118,13 +118,7 @@ def send_bootloader_file(ser, bin_data):
     print(f"Paket boyutu: {PACKET_SIZE} byte")
     print(f"Toplam paket sayısı: {total_packets}")
     print()
-    
-    # 10 saniye bekle
-    print(f"{WAIT_TIME} saniye bekleniyor...")
-    for i in range(WAIT_TIME, 0, -1):
-        print(f"  Kalan süre: {i} saniye", end='\r')
-        time.sleep(1)
-    print("\nBekleme tamamlandı. Gönderim başlıyor...\n")
+    print("Gönderim başlıyor...\n")
     
     # Paketleri gönder
     sent_bytes = 0
