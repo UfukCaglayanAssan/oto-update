@@ -75,6 +75,10 @@ def send_packet(ser, packet_data, packet_number, total_packets):
         START_BYTE = 0xAA  # Paket başlangıç byte'ı
         packet_size = len(packet_data)
         
+        if packet_size == 0:
+            print(f"Uyarı: Paket {packet_number} boş!")
+            return False
+        
         # Paket numarasını 2 byte olarak ayır
         packet_num_high = (packet_number >> 8) & 0xFF
         packet_num_low = packet_number & 0xFF
@@ -92,8 +96,11 @@ def send_packet(ser, packet_data, packet_number, total_packets):
         packet.append(checksum)
         
         # Paketi gönder
-        ser.write(packet)
+        bytes_written = ser.write(packet)
         ser.flush()  # Tüm verinin gönderildiğinden emin ol
+        
+        if bytes_written != len(packet):
+            print(f"Uyarı: Paket {packet_number} tam gönderilmedi! ({bytes_written}/{len(packet)} byte)")
         
         print(f"Paket {packet_number}/{total_packets} gönderildi - Veri boyutu: {packet_size} byte, Toplam paket: {len(packet)} byte")
         
@@ -103,6 +110,8 @@ def send_packet(ser, packet_data, packet_number, total_packets):
         return True
     except Exception as e:
         print(f"Hata: Paket gönderilemedi - {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def send_bootloader_file(ser, bin_data):
@@ -127,13 +136,21 @@ def send_bootloader_file(ser, bin_data):
         end_idx = min(start_idx + PACKET_SIZE, total_size)
         packet_data = bin_data[start_idx:end_idx]
         
-        if not send_packet(ser, packet_data, packet_num + 1, total_packets):
-            print(f"Paket {packet_num + 1} gönderilemedi, işlem durduruluyor.")
+        print(f"Paket {packet_num + 1} hazırlanıyor... (indeks: {start_idx}-{end_idx})")
+        
+        try:
+            if not send_packet(ser, packet_data, packet_num + 1, total_packets):
+                print(f"Paket {packet_num + 1} gönderilemedi, işlem durduruluyor.")
+                return False
+        except Exception as e:
+            print(f"Paket {packet_num + 1} gönderilirken hata oluştu: {e}")
+            import traceback
+            traceback.print_exc()
             return False
         
         sent_bytes += len(packet_data)
         progress = (sent_bytes / total_size) * 100
-        print(f"İlerleme: {progress:.1f}% ({sent_bytes}/{total_size} byte)")
+        print(f"İlerleme: {progress:.1f}% ({sent_bytes}/{total_size} byte)\n")
     
     print("\n" + "=" * 50)
     print("Tüm paketler başarıyla gönderildi!")
@@ -196,11 +213,18 @@ def main():
     # Serial port'u aç
     ser = open_serial_port(port_name, BAUD_RATE)
     
+    # Port'u temizle
+    ser.reset_input_buffer()
+    ser.reset_output_buffer()
+    time.sleep(0.1)  # Port'un hazır olması için kısa bekleme
+    
     # Port ayarlarını göster
     print(f"Baud Rate: {ser.baudrate}")
     print(f"Data Bits: {ser.bytesize}")
     print(f"Parity: {ser.parity}")
     print(f"Stop Bits: {ser.stopbits}")
+    print(f"Port açık: {ser.is_open}")
+    print(f"Yazılabilir: {ser.writable()}")
     print()
     
     try:
