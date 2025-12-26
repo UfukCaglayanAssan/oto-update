@@ -36,7 +36,8 @@ def open_serial_port(port_name=None, baud_rate=BAUD_RATE):
     try:
         if port_name is None:
             # Raspberry Pi'de genellikle kullanılan portlar
-            common_ports = ['/dev/ttyUSB0', '/dev/ttyAMA0', '/dev/ttyS0', '/dev/ttyACM0']
+            # Nu-Link2 VCOM portu da dahil
+            common_ports = ['/dev/ttyUSB0', '/dev/ttyUSB1', '/dev/ttyAMA0', '/dev/ttyS0', '/dev/ttyACM0', '/dev/ttyACM1']
             for port in common_ports:
                 try:
                     ser = serial.Serial(port, baud_rate, timeout=TIMEOUT, write_timeout=WRITE_TIMEOUT,
@@ -200,11 +201,42 @@ def send_handshake(ser):
             return True  # Devam et
         
         # Küçük paket olduğu için direkt gönder (timeout ile)
+        # Nu-Link2 VCOM portu için özel işlem
+        bytes_written = 0
         try:
+            # Önce port'un yazılabilir olduğundan emin ol
+            if not ser.writable():
+                print(f"  ✗ Port yazılabilir değil!")
+                return True
+            
+            # Output buffer boş mu kontrol et
+            if ser.out_waiting > 100:  # Eğer çok doluysa
+                print(f"  ⚠ Output buffer çok dolu ({ser.out_waiting} byte), temizleniyor...")
+                ser.reset_output_buffer()
+                time.sleep(0.2)
+            
+            # Yazma işlemi
             bytes_written = ser.write(handshake)
-            print(f"  {bytes_written} byte yazıldı")
-        except serial.SerialTimeoutException:
-            print(f"  ⚠ Write timeout, ama devam ediliyor...")
+            print(f"  {bytes_written}/{len(handshake)} byte yazıldı")
+            
+        except serial.SerialTimeoutException as e:
+            print(f"  ⚠ Write timeout: {e}")
+            print(f"  → Port yazma işlemi zaman aşımına uğradı")
+            print(f"  → Muhtemelen port donmuş veya başka program kullanıyor")
+            # Port'u kapatıp yeniden açmayı dene
+            try:
+                ser.close()
+                time.sleep(0.5)
+                ser.open()
+                time.sleep(0.3)
+                print(f"  → Port yeniden açıldı, tekrar deneniyor...")
+                bytes_written = ser.write(handshake)
+                print(f"  ✓ İkinci denemede {bytes_written} byte yazıldı")
+            except:
+                print(f"  ⚠ Port yeniden açılamadı, devam ediliyor...")
+                bytes_written = len(handshake)  # Varsayalım ki yazıldı
+        except Exception as e:
+            print(f"  ⚠ Yazma hatası: {e}")
             bytes_written = len(handshake)  # Varsayalım ki yazıldı
         
         # Flush işlemi (timeout ile - çok kısa süre)
@@ -376,10 +408,30 @@ def main():
     # Serial port'u aç
     ser = open_serial_port(port_name, BAUD_RATE)
     
-    # Port'u temizle
-    ser.reset_input_buffer()
-    ser.reset_output_buffer()
-    time.sleep(0.1)  # Port'un hazır olması için kısa bekleme
+    # Port'u temizle ve hazırla
+    print("Port hazırlanıyor...")
+    try:
+        ser.reset_input_buffer()
+        ser.reset_output_buffer()
+    except:
+        pass  # Reset başarısız olsa bile devam et
+    
+    # Port'un hazır olması için bekle
+    time.sleep(0.3)  # Biraz daha uzun bekle
+    
+    # Port durumunu kontrol et
+    print(f"Port durumu kontrol ediliyor...")
+    print(f"  - out_waiting: {ser.out_waiting} byte")
+    print(f"  - in_waiting: {ser.in_waiting} byte")
+    
+    # Eğer output buffer doluysa temizle
+    if ser.out_waiting > 0:
+        print(f"  ⚠ Output buffer'da {ser.out_waiting} byte var, temizleniyor...")
+        try:
+            ser.reset_output_buffer()
+            time.sleep(0.2)
+        except:
+            pass
     
     # Port ayarlarını göster
     print(f"Baud Rate: {ser.baudrate}")
