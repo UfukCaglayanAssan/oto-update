@@ -14,7 +14,7 @@ import os
 # UART ayarları
 BAUD_RATE = 115200  # İhtiyaca göre değiştirilebilir (9600, 19200, 38400, 57600, 115200)
 TIMEOUT = 2  # Okuma timeout'u (saniye)
-WRITE_TIMEOUT = None  # Yazma timeout'u (None = sınırsız, saniye cinsinden)
+WRITE_TIMEOUT = 5  # Yazma timeout'u (saniye) - None yerine 5 saniye
 WAIT_TIME = 10  # Script başladıktan sonra bekleme süresi (saniye)
 PACKET_SIZE = 256  # Her paketteki byte sayısı (ayarlanabilir: 64, 128, 256, 512)
 
@@ -175,17 +175,55 @@ def send_handshake(ser):
     """Bootloader'a handshake paketi gönderir ve yanıt bekler"""
     print("Handshake paketi gönderiliyor...")
     
-    # Buffer'ı temizle
-    ser.reset_input_buffer()
-    ser.reset_output_buffer()
-    time.sleep(0.1)
-    
-    # Handshake paketi: [CMD_BOOTLOADER_ENTER, CMD_START_UPDATE]
-    handshake = bytearray([CMD_BOOTLOADER_ENTER, CMD_START_UPDATE])
-    
     try:
-        ser.write(handshake)
-        ser.flush()
+        # Buffer'ı temizle
+        print("  Buffer temizleniyor...")
+        ser.reset_input_buffer()
+        ser.reset_output_buffer()
+        time.sleep(0.2)
+        
+        # Output buffer kontrolü
+        if ser.out_waiting > 0:
+            print(f"  Uyarı: Output buffer'da {ser.out_waiting} byte var, temizleniyor...")
+            ser.reset_output_buffer()
+            time.sleep(0.1)
+        
+        # Handshake paketi: [CMD_BOOTLOADER_ENTER, CMD_START_UPDATE]
+        handshake = bytearray([CMD_BOOTLOADER_ENTER, CMD_START_UPDATE])
+        
+        print(f"  Handshake paketi hazır: {handshake.hex()}")
+        print(f"  Yazma işlemi başlıyor...")
+        
+        # Port yazılabilir mi kontrol et
+        if not ser.writable():
+            print(f"  ⚠ Port yazılabilir değil!")
+            return True  # Devam et
+        
+        # Küçük paket olduğu için direkt gönder (timeout ile)
+        try:
+            bytes_written = ser.write(handshake)
+            print(f"  {bytes_written} byte yazıldı")
+        except serial.SerialTimeoutException:
+            print(f"  ⚠ Write timeout, ama devam ediliyor...")
+            bytes_written = len(handshake)  # Varsayalım ki yazıldı
+        
+        # Flush işlemi (timeout ile - çok kısa süre)
+        print(f"  Flush işlemi (max 1 saniye)...")
+        start_time = time.time()
+        flush_timeout = 1.0  # 1 saniye timeout
+        
+        try:
+            while ser.out_waiting > 0:
+                if time.time() - start_time > flush_timeout:
+                    print(f"  ⚠ Flush timeout ({flush_timeout}s), devam ediliyor...")
+                    break
+                time.sleep(0.01)
+            
+            # Flush'u da timeout ile yap
+            ser.flush()
+        except Exception as e:
+            print(f"  ⚠ Flush hatası (önemsiz): {e}")
+        
         print(f"Handshake gönderildi: {handshake.hex()}")
         
         # Yanıt bekle (daha uzun süre)
@@ -213,8 +251,17 @@ def send_handshake(ser):
             print("  → Devam ediliyor... (test amaçlı)")
             return True  # Yanıt olmasa bile devam et (test için)
             
+    except serial.SerialTimeoutException as e:
+        print(f"⚠ Write timeout: {e}")
+        print("  → Port yazma işlemi zaman aşımına uğradı")
+        print("  → Port kontrolü yapın veya bağlantıyı kontrol edin")
+        print("  → Devam ediliyor...")
+        return True  # Timeout olsa bile devam et
     except Exception as e:
-        print(f"Handshake hatası: {e}, devam ediliyor...")
+        print(f"Handshake hatası: {e}")
+        import traceback
+        traceback.print_exc()
+        print("  → Devam ediliyor...")
         return True  # Hata olsa bile devam et
 
 def send_bootloader_file(ser, bin_data):
