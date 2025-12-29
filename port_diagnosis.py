@@ -75,3 +75,4 @@ print("3. Manuel UART pinlerini kullanmak için:")
 print("   - Kartın pinout'una bakın (UART0 TX/RX)")
 print("   - USB-to-UART dönüştürücü kullanın")
 
+

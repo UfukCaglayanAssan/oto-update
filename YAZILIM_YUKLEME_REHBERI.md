@@ -2,15 +2,21 @@
 
 ## Yöntem 1: Nu-Link Programlayıcı ile İlk Yükleme (Önerilen)
 
+### ⚠️ ÖNEMLİ: Bootloader Yükleme İçin
+
+**Python scriptimizle gönderdiğimiz paketleri dinleyecek bootloader'ı karta yüklemek için bu yöntemi kullanın!**
+
 ### Gereksinimler
 - **Nu-Link Programlayıcı**: Kart üzerinde genellikle Nu-Link-Me veya harici Nu-Link programlayıcı
 - **NuMicro ICP Programming Tool**: Nuvoton'un resmi programlama yazılımı
 - **USB Kablosu**: Kartı bilgisayara bağlamak için
+- **Bootloader .bin/.hex dosyası**: Derlenmiş bootloader kodu
 
 ### Adımlar
 
 1. **Yazılımı İndirin**
    - Nuvoton resmi web sitesinden **NuMicro ICP Programming Tool** indirin
+   - İndirme sayfasında: **NuMicro_ICP_Programming_Tool_V3.21.7829r** seçin
    - Link: https://www.nuvoton.com/tool-and-software/software-development-tool/code-burning-tool/
 
 2. **Kartı Bağlayın**
@@ -21,12 +27,21 @@
    - NuMicro ICP Programming Tool'u çalıştırın
    - Kart otomatik olarak algılanmalı
 
-4. **Firmware Yükleyin**
-   - **Connect** butonuna tıklayın
-   - **APROM** veya **LDROM** seçin (genellikle APROM)
-   - **Browse** ile `.bin` veya `.hex` dosyanızı seçin
+4. **Bootloader'ı LDROM'a Yükleyin** ⚠️ ÖNEMLİ
+   
+   **Bootloader mutlaka LDROM'a yüklenmelidir!**
+   
+   - **LDROM** (veya **Loader ROM**) sekmesini seçin
+   - **Browse** ile bootloader `.bin` veya `.hex` dosyanızı seçin
    - **Start** butonuna tıklayın
    - Programlama tamamlanana kadar bekleyin
+   - Başarılı mesajını kontrol edin
+
+5. **Uygulama Kodunu APROM'a Yükleyin** (Opsiyonel)
+   - **APROM** sekmesini seçin
+   - **Browse** ile uygulama `.bin` veya `.hex` dosyanızı seçin
+   - **Start** butonuna tıklayın
+   - Bootloader, APROM'daki uygulamayı çalıştıracak
 
 ### Nu-Link-Me (Kart Üzerindeki Programlayıcı)
 
@@ -105,9 +120,9 @@ GND       ----------->  GND
 
 ---
 
-## Yöntem 3: ISP Tool ile UART Üzerinden Yükleme
+## Yöntem 3: ISP Tool ile UART Üzerinden Yükleme ⭐ PROGRAMLAYICI GEREKTİRMEZ
 
-Nuvoton'un resmi ISP (In-System Programming) aracı.
+Nuvoton'un resmi ISP (In-System Programming) aracı. **UART-to-USB ile bootloader yüklemek için bu yöntemi kullanın!**
 
 ### USB Bağlantısı
 
@@ -118,9 +133,9 @@ Nuvoton'un resmi ISP (In-System Programming) aracı.
 - Linux'ta: `/dev/ttyUSB0` veya `/dev/ttyACM0` olarak görünecek
 
 ### Gereksinimler
-- **ISPTool**: Nuvoton'un ISP programlama aracı
+- **ISPTool**: Nuvoton'un ISP programlama aracı (ücretsiz, indirilebilir)
 - USB kablosu (kartta zaten var)
-- LDROM'da ISP bootloader olmalı (ilk yükleme için ICP Tool ile yüklenir)
+- **LDROM'da ISP bootloader olmalı** - Genellikle fabrika çıkışı kartlarda zaten var!
 
 ### Adımlar
 

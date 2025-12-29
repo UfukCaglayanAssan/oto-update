@@ -39,3 +39,4 @@ else
     python3 uart_receiver.py "$PORT"
 fi
 
+

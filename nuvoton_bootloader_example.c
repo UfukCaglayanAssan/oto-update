@@ -177,3 +177,4 @@ void bootloader_main(void) {
  * 8. Watchdog timer kullanılmalıdır (sistem donmasını önlemek için)
  */
 
+
