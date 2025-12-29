@@ -37,6 +37,7 @@ def open_serial_port(port_name=None, baud_rate=BAUD_RATE):
         if port_name is None:
             # Raspberry Pi'de genellikle kullanılan portlar
             # Nu-Link2 VCOM portu da dahil
+            # GPIO UART portları da dahil (Raspberry Pi için)
             common_ports = ['/dev/ttyUSB0', '/dev/ttyUSB1', '/dev/ttyAMA0', '/dev/ttyS0', '/dev/ttyACM0', '/dev/ttyACM1']
             for port in common_ports:
                 try:
@@ -171,6 +172,56 @@ def send_packet(ser, packet_data, packet_number, total_packets):
         import traceback
         traceback.print_exc()
         return False
+
+def detect_port_from_data(timeout=10):
+    """Reset sonrası veri gönderen portu tespit eder"""
+    print("\n" + "=" * 60)
+    print("UART Port Otomatik Tespit (Reset sonrası veri dinleme)")
+    print("=" * 60)
+    
+    import serial.tools.list_ports
+    
+    # Tüm portları al
+    all_ports = [p.device for p in serial.tools.list_ports.comports()]
+    
+    if len(all_ports) == 0:
+        print("✗ Hiç port bulunamadı!")
+        return None
+    
+    print(f"\nMevcut portlar: {', '.join(all_ports)}")
+    print(f"\n⚠️  ŞİMDİ NRESET BUTONUNA BASIN!")
+    print(f"Port tespiti başlıyor ({timeout} saniye)...\n")
+    
+    # Her portu dinle
+    start_time = time.time()
+    while time.time() - start_time < timeout:
+        for port_name in all_ports:
+            try:
+                ser = serial.Serial(port_name, 115200, timeout=0.5)
+                ser.reset_input_buffer()
+                
+                if ser.in_waiting > 0:
+                    data = ser.read(ser.in_waiting)
+                    ser.close()
+                    print(f"\n✓✓✓ PORT TESPİT EDİLDİ: {port_name} ✓✓✓")
+                    print(f"Gelen veri: {data.hex()}")
+                    if len(data) > 0:
+                        try:
+                            print(f"ASCII: {data.decode('utf-8', errors='replace')}")
+                        except:
+                            pass
+                    return port_name
+                ser.close()
+            except:
+                continue
+        
+        time.sleep(0.2)
+        elapsed = int(time.time() - start_time)
+        if elapsed % 2 == 0:
+            print(f"  Taranıyor... ({elapsed}/{timeout} saniye)", end='\r')
+    
+    print(f"\n✗ {timeout} saniye içinde veri gönderen port bulunamadı")
+    return None
 
 def send_handshake(ser):
     """Bootloader'a handshake paketi gönderir ve yanıt bekler"""
