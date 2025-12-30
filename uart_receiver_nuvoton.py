@@ -34,11 +34,12 @@ CMD_UPDATE_DATAFLASH = 0x000000C3
 CMD_RESEND_PACKET = 0x000000FF
 
 def find_serial_ports():
-    ports = serial.tools.list_ports.comports()
-    print("Mevcut Serial Portlar:")
-    for port in ports:
-        print(f"  - {port.device}: {port.description}")
-    return ports
+    """Mevcut serial portlari listeler"""
+    ports = serial.tools.list_ports.comports()
+    print("Mevcut Serial Portlar:")
+    for port in ports:
+        print(f"  - {port.device}: {port.description}")
+    return ports
 
 def open_serial_port(port_name=None, baud_rate=BAUD_RATE):
     """Serial port'u açar"""
@@ -132,7 +133,7 @@ def open_serial_port(port_name=None, baud_rate=BAUD_RATE):
         sys.exit(1)
 
 def uint32_to_bytes(value):
-    """uint32_t değerini little-endian byte array'e çevirir"""
+    """uint32_t degerini little-endian byte array'e cevirir"""
     return bytes([
         (value >> 0) & 0xFF,
         (value >> 8) & 0xFF,
@@ -173,28 +174,28 @@ def create_packet(cmd, param1=0, param2=0, data=None, is_first_packet=False):
         packet[8:12] = uint32_to_bytes(param1)  # Paket numarası
         return packet
     
-    # İlk paket için özel format (CMD_UPDATE_APROM):
-    # ISP_UART kodunda: pu8Src += 8 yapılıyor, sonra:
-    # Byte 8-11: Address (inpw(pu8Src))
-    # Byte 12-15: TotalLen (inpw(pu8Src + 4))
-    # Byte 16-63: Data (48 byte)
-    if is_first_packet and param2 != 0:
-        # Byte 8-11: Address
-        packet[8:12] = uint32_to_bytes(param1)
-        # Byte 12-15: TotalLen
-        packet[12:16] = uint32_to_bytes(param2)
-        # Byte 16-63: Veri (48 byte)
-        if data:
-            data_len = min(len(data), 48)  # İlk pakette maksimum 48 byte veri
-            packet[16:16+data_len] = data[:data_len]
-    else:
-        # Devam paketleri için:
-        # Byte 0-3: CMD
-        # Byte 4-7: İgnore edilir (bootloader kullanmıyor)
-        # Byte 8-63: Veri (56 byte) - pu8Src += 8 yapıldıktan sonra byte 8'den başlıyor
-        if data:
-            data_len = min(len(data), 56)  # Devam paketlerinde maksimum 56 byte veri
-            packet[8:8+data_len] = data[:data_len]
+    # Ilk paket icin ozel format (CMD_UPDATE_APROM):
+    # ISP_UART kodunda: pu8Src += 8 yapiliyor, sonra:
+    # Byte 8-11: Address (inpw(pu8Src))
+    # Byte 12-15: TotalLen (inpw(pu8Src + 4))
+    # Byte 16-63: Data (48 byte)
+    if is_first_packet and param2 != 0:
+        # Byte 8-11: Address
+        packet[8:12] = uint32_to_bytes(param1)
+        # Byte 12-15: TotalLen
+        packet[12:16] = uint32_to_bytes(param2)
+        # Byte 16-63: Veri (48 byte)
+        if data:
+            data_len = min(len(data), 48)  # Ilk pakette maksimum 48 byte veri
+            packet[16:16+data_len] = data[:data_len]
+    else:
+        # Devam paketleri icin:
+        # Byte 0-3: CMD
+        # Byte 4-7: Ignore edilir (bootloader kullanmiyor)
+        # Byte 8-63: Veri (56 byte) - pu8Src += 8 yapildiktan sonra byte 8'den basliyor
+        if data:
+            data_len = min(len(data), 56)  # Devam paketlerinde maksimum 56 byte veri
+            packet[8:8+data_len] = data[:data_len]
     
     return packet
 
@@ -437,7 +438,7 @@ def send_connect(ser):
         return False
 
 def send_update_aprom(ser, bin_data):
-    """APROM güncellemesi yapar"""
+    """APROM guncellemesi yapar"""
     total_size = len(bin_data)
     start_address = 0x00000000  # APROM başlangıç adresi
     
