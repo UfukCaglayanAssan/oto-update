@@ -53,3 +53,4 @@ KEIL PROJESİ AYARLARI - LDROM ADRESİNE DERLEME
 - APROM'a (0x00000000) yazacak şekilde kodlanmış
 - Handshake: 0x55 0x5A alır, 0xAA yanıt verir
 
+

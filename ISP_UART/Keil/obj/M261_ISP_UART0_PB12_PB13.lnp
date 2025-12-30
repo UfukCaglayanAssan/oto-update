@@ -1,0 +1,13 @@
+--cpu=Cortex-M23
+".\obj\startup_m261.o"
+".\obj\system_m261.o"
+".\obj\main.o"
+".\obj\fmc_user.o"
+".\obj\isp_user.o"
+".\obj\uart_transfer.o"
+".\obj\clk.o"
+"..\..\..\..\Library\StdDriver\src\MKROMLib_Keil.lib"
+--library_type=microlib --ro-base 0x00100000 --entry 0x00100000 --rw-base 0x20000000 --entry Reset_Handler --first __Vectors --strict
+--map --first='startup_M261.o(RESET)' --datacompressor=off --info=inline --entry Reset_Handler --summary_stderr --info summarysizes --map --load_addr_map_info --xref --callgraph --symbols
+--info sizes --info totals --info unused --info veneers
+--list ".\lst\M261_ISP_UART0_PB12_PB13.map" -o .\obj\M261_ISP_UART0_PB12_PB13.axf
