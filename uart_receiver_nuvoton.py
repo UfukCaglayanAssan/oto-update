@@ -76,23 +76,60 @@ def open_serial_port(port_name=None, baud_rate=BAUD_RATE):
     except FileNotFoundError as e:
         print(f"✗ Hata: Port bulunamadı - {e}")
         print()
-        print("Kontrol edin:")
-        print("  1. USB-UART dönüştürücü bağlı mı?")
-        print("  2. USB kablosu çalışıyor mu?")
-        print("  3. Port adı doğru mu?")
-        print()
-        print("Mevcut portları görmek için:")
-        print("  python3 quick_port_check.py")
-        print("  veya")
-        print("  ls -l /dev/tty* | grep -E 'ACM|USB'")
+        
+        # Mevcut portları göster
+        ports = serial.tools.list_ports.comports()
+        if ports:
+            print("Mevcut portlar:")
+            for p in ports:
+                print(f"  ✓ {p.device}: {p.description}")
+            print()
+            print(f"ÖNERİLEN: {ports[0].device} portunu kullanın!")
+            print()
+            print(f"Kullanım:")
+            print(f"  python3 uart_receiver_nuvoton.py {ports[0].device} NuvotonM26x-Bootloader-Test.bin")
+        else:
+            print("Kontrol edin:")
+            print("  1. USB-UART dönüştürücü bağlı mı?")
+            print("  2. USB kablosu çalışıyor mu?")
+            print("  3. Port adı doğru mu?")
+            print()
+            print("Mevcut portları görmek için:")
+            print("  python3 quick_port_check.py")
+            print("  veya")
+            print("  ls -l /dev/tty* | grep -E 'ACM|USB'")
         sys.exit(1)
     except serial.SerialException as e:
         print(f"✗ Hata: Port açılamadı - {e}")
         print()
+        
+        # Port kullanımını kontrol et
+        import subprocess
+        try:
+            result = subprocess.run(['lsof', port_name], capture_output=True, text=True)
+            if result.returncode == 0 and result.stdout:
+                print("⚠️  Port başka bir program tarafından kullanılıyor:")
+                print(result.stdout)
+                print()
+                print("Çözüm:")
+                print("  1. Diğer programı kapatın (uart_listener.py gibi)")
+                print("  2. Veya farklı bir port kullanın")
+        except:
+            pass
+        
         print("Kontrol edin:")
         print("  1. Port başka bir program tarafından kullanılıyor olabilir")
+        print("     → lsof | grep ttyACM0  ile kontrol edin")
         print("  2. Port izinleri yeterli mi? (sudo gerekebilir)")
         print("  3. USB-UART dönüştürücü driver'ı yüklü mü?")
+        print()
+        
+        # Mevcut portları göster
+        ports = serial.tools.list_ports.comports()
+        if ports:
+            print("Mevcut portlar:")
+            for p in ports:
+                print(f"  - {p.device}: {p.description}")
         sys.exit(1)
 
 def uint32_to_bytes(value):
