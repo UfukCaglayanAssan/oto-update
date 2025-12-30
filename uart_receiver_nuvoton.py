@@ -45,23 +45,54 @@ def open_serial_port(port_name=None, baud_rate=BAUD_RATE):
     """Serial port'u açar"""
     try:
         if port_name is None:
-            common_ports = ['/dev/ttyUSB0', '/dev/ttyUSB1', '/dev/ttyAMA0', '/dev/ttyS0', '/dev/ttyACM0', '/dev/ttyACM1']
-            for port in common_ports:
-                try:
-                    ser = serial.Serial(port, baud_rate, timeout=TIMEOUT, write_timeout=WRITE_TIMEOUT,
-                                      rtscts=False, dsrdtr=False, xonxoff=False)
-                    print(f"Port açıldı: {port}")
-                    return ser
-                except serial.SerialException:
-                    continue
-            raise serial.SerialException("Uygun port bulunamadı")
-        else:
-            ser = serial.Serial(port_name, baud_rate, timeout=TIMEOUT, write_timeout=WRITE_TIMEOUT,
-                              rtscts=False, dsrdtr=False, xonxoff=False)
-            print(f"Port açıldı: {port_name}")
-            return ser
+            # Önce PySerial ile portları bul
+            ports = serial.tools.list_ports.comports()
+            if ports:
+                print("Mevcut portlar:")
+                for p in ports:
+                    print(f"  - {p.device}: {p.description}")
+                # İlk bulunan portu dene
+                port_name = ports[0].device
+                print(f"Otomatik seçilen port: {port_name}")
+            else:
+                # PySerial port bulamazsa standart portları dene
+                common_ports = ['/dev/ttyACM0', '/dev/ttyACM1', '/dev/ttyUSB0', '/dev/ttyUSB1', '/dev/ttyAMA0', '/dev/ttyS0']
+                for port in common_ports:
+                    try:
+                        ser = serial.Serial(port, baud_rate, timeout=TIMEOUT, write_timeout=WRITE_TIMEOUT,
+                                          rtscts=False, dsrdtr=False, xonxoff=False)
+                        print(f"Port açıldı: {port}")
+                        return ser
+                    except (serial.SerialException, FileNotFoundError):
+                        continue
+                raise serial.SerialException("Uygun port bulunamadı")
+        
+        # Belirtilen portu aç
+        ser = serial.Serial(port_name, baud_rate, timeout=TIMEOUT, write_timeout=WRITE_TIMEOUT,
+                          rtscts=False, dsrdtr=False, xonxoff=False)
+        print(f"Port açıldı: {port_name}")
+        return ser
+        
+    except FileNotFoundError as e:
+        print(f"✗ Hata: Port bulunamadı - {e}")
+        print()
+        print("Kontrol edin:")
+        print("  1. USB-UART dönüştürücü bağlı mı?")
+        print("  2. USB kablosu çalışıyor mu?")
+        print("  3. Port adı doğru mu?")
+        print()
+        print("Mevcut portları görmek için:")
+        print("  python3 quick_port_check.py")
+        print("  veya")
+        print("  ls -l /dev/tty* | grep -E 'ACM|USB'")
+        sys.exit(1)
     except serial.SerialException as e:
-        print(f"Hata: Port açılamadı - {e}")
+        print(f"✗ Hata: Port açılamadı - {e}")
+        print()
+        print("Kontrol edin:")
+        print("  1. Port başka bir program tarafından kullanılıyor olabilir")
+        print("  2. Port izinleri yeterli mi? (sudo gerekebilir)")
+        print("  3. USB-UART dönüştürücü driver'ı yüklü mü?")
         sys.exit(1)
 
 def uint32_to_bytes(value):
