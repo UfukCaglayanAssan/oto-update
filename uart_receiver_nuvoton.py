@@ -437,33 +437,50 @@ def send_connect(ser):
             print(f"  Kısmi yanıt (Hex): {partial.hex()[:50]}")
         return False
 
-def send_update_aprom(ser, bin_data):
+def send_update_aprom(ser, bin_data, erase_before_update=True):
     """APROM guncellemesi yapar"""
-    total_size = len(bin_data)
-    start_address = 0x00000000  # APROM başlangıç adresi
-    
-    print(f"\n{'='*60}")
-    print(f"APROM Güncelleme Başlatılıyor...")
-    print(f"{'='*60}")
-    print(f"Dosya boyutu: {total_size} byte")
-    print(f"Başlangıç adresi: 0x{start_address:08X}")
-    
-    # İlk paket: CMD_UPDATE_APROM + adres + boyut
-    print(f"\n[1/3] CMD_UPDATE_APROM (başlangıç) gönderiliyor...")
-    first_data = bin_data[:48] if len(bin_data) >= 48 else bin_data  # İlk 48 byte (byte 16-63)
-    first_packet = create_packet(CMD_UPDATE_APROM, start_address, total_size, first_data, is_first_packet=True)
-    
-    if not send_packet(ser, first_packet):
-        print("✗ İlk paket gönderilemedi")
-        return False
-    
-    print(f"✓ İlk paket gönderildi ({len(first_data)} byte veri)")
-    
-    # Yanıt bekle
-    response = receive_response(ser, timeout=1.0)
-    if response:
-        packet_no = bytes_to_uint32(response, 4)
-        print(f"✓ Yanıt alındı, Paket No: {packet_no}")
+    total_size = len(bin_data)
+    start_address = 0x00000000  # APROM baslangic adresi
+    
+    print(f"\n{'='*60}")
+    print(f"APROM Guncelleme Baslatiliyor...")
+    print(f"{'='*60}")
+    print(f"Dosya boyutu: {total_size} byte")
+    print(f"Baslangic adresi: 0x{start_address:08X}")
+    
+    # ONEMLI: Guncelleme oncesi tam silme (opsiyonel ama onerilen)
+    if erase_before_update:
+        print(f"\n[0/3] CMD_ERASE_ALL gonderiliyor (tum APROM silinecek)...")
+        erase_packet = create_packet(CMD_ERASE_ALL)
+        if send_packet(ser, erase_packet):
+            print(f"[OK] CMD_ERASE_ALL gonderildi")
+            # Silme islemi zaman alir
+            time.sleep(2.0)  # Flash silme icin yeterli sure
+            erase_response = receive_response(ser, timeout=1.0)
+            if erase_response:
+                erase_packet_no = bytes_to_uint32(erase_response, 4)
+                print(f"[OK] Silme tamamlandi, Paket No: {erase_packet_no}")
+            else:
+                print(f"[!] Silme yaniti alinamadi (devam ediliyor)")
+        else:
+            print(f"[!] CMD_ERASE_ALL gonderilemedi (devam ediliyor)")
+    
+    # Ilk paket: CMD_UPDATE_APROM + adres + boyut
+    print(f"\n[1/3] CMD_UPDATE_APROM (baslangic) gonderiliyor...")
+    first_data = bin_data[:48] if len(bin_data) >= 48 else bin_data  # Ilk 48 byte (byte 16-63)
+    first_packet = create_packet(CMD_UPDATE_APROM, start_address, total_size, first_data, is_first_packet=True)
+    
+    if not send_packet(ser, first_packet):
+        print("[X] Ilk paket gonderilemedi")
+        return False
+    
+    print(f"[OK] Ilk paket gonderildi ({len(first_data)} byte veri)")
+    
+    # Yanit bekle
+    response = receive_response(ser, timeout=1.0)
+    if response:
+        packet_no = bytes_to_uint32(response, 4)
+        print(f"[OK] Yanit alindi, Paket No: {packet_no}")
     
     # Devam paketleri (56 byte veri her pakette)
     data_offset = 48  # İlk pakette 48 byte gönderildi
@@ -663,42 +680,56 @@ def main():
                             first_bytes = response[:4]
                             is_ascii = all(32 <= b <= 126 for b in first_bytes[:4])
                             
-                            if not is_ascii:
-                                # Bootloader yanıtı!
-                                checksum = (response[1] << 8) | response[0]
-                                packet_no = bytes_to_uint32(response, 4)
-                                aprom_size = bytes_to_uint32(response, 8)
-                                dataflash_addr = bytes_to_uint32(response, 12)
-                                
-                                print(f"\n✓✓✓ BOOTLOADER YAKALANDI! ✓✓✓")
-                                print(f"  Checksum: 0x{checksum:04X}")
-                                print(f"  Paket No: {packet_no}")
-                                print(f"  APROM Boyutu: {aprom_size} byte (0x{aprom_size:08X})")
-                                print(f"  DataFlash Adresi: 0x{dataflash_addr:08X}")
-                                
-                                # Cihaz ID'sini almak için CMD_GET_DEVICEID gönder
-                                print(f"\n  Cihaz ID'si alınıyor...")
-                                device_id_packet = create_packet(CMD_GET_DEVICEID)
-                                if send_packet(ser, device_id_packet):
-                                    time.sleep(0.15)
-                                    device_response = receive_response(ser, timeout=0.5)
-                                    if device_response and len(device_response) >= 64:
-                                        device_id = bytes_to_uint32(device_response, 8)
-                                        checksum_dev = (device_response[1] << 8) | device_response[0]
-                                        print(f"  ✓✓✓ CİHAZ ID YAKALANDI! ✓✓✓")
-                                        print(f"  Cihaz ID: 0x{device_id:08X}")
-                                        print(f"  Checksum: 0x{checksum_dev:04X}")
-                                    else:
-                                        print(f"  ⚠ Cihaz ID yanıtı alınamadı")
-                                        if device_response:
-                                            print(f"  Kısmi yanıt: {device_response.hex()[:50]}")
-                                else:
-                                    print(f"  ⚠ CMD_GET_DEVICEID gönderilemedi")
-                                
-                                print()  # Boş satır
-                                
-                                connected = True
-                                break
+                        if not is_ascii:
+                            # Bootloader yanıtı!
+                            checksum = (response[1] << 8) | response[0]
+                            packet_no = bytes_to_uint32(response, 4)
+                            aprom_size = bytes_to_uint32(response, 8)
+                            dataflash_addr = bytes_to_uint32(response, 12)
+                            
+                            print(f"\n[OK][OK][OK] BOOTLOADER YAKALANDI! [OK][OK][OK]")
+                            print(f"  Checksum: 0x{checksum:04X}")
+                            print(f"  Paket No: {packet_no}")
+                            print(f"  APROM Boyutu: {aprom_size} byte (0x{aprom_size:08X})")
+                            print(f"  DataFlash Adresi: 0x{dataflash_addr:08X}")
+                            
+                            # KRITIK: Paket numarasi senkronizasyonu
+                            print(f"\n  [KRITIK] Paket numarasi senkronize ediliyor...")
+                            sync_packet = create_packet(CMD_SYNC_PACKNO, 1)  # Byte 8-11'de paket numarasi = 1
+                            if send_packet(ser, sync_packet):
+                                time.sleep(0.1)
+                                sync_response = receive_response(ser, timeout=0.3)
+                                if sync_response:
+                                    sync_packet_no = bytes_to_uint32(sync_response, 4)
+                                    print(f"  [OK] Paket numarasi senkronize edildi: {sync_packet_no}")
+                                else:
+                                    print(f"  [!] Paket numarasi senkronizasyon yaniti alinamadi (devam ediliyor)")
+                            else:
+                                print(f"  [!] CMD_SYNC_PACKNO gonderilemedi (devam ediliyor)")
+                            
+                            # Cihaz ID'sini almak icin CMD_GET_DEVICEID gonder
+                            print(f"\n  Cihaz ID'si aliniyor...")
+                            device_id_packet = create_packet(CMD_GET_DEVICEID)
+                            if send_packet(ser, device_id_packet):
+                                time.sleep(0.15)
+                                device_response = receive_response(ser, timeout=0.5)
+                                if device_response and len(device_response) >= 64:
+                                    device_id = bytes_to_uint32(device_response, 8)
+                                    checksum_dev = (device_response[1] << 8) | device_response[0]
+                                    print(f"  [OK][OK][OK] CIHAZ ID YAKALANDI! [OK][OK][OK]")
+                                    print(f"  Cihaz ID: 0x{device_id:08X}")
+                                    print(f"  Checksum: 0x{checksum_dev:04X}")
+                                else:
+                                    print(f"  [!] Cihaz ID yaniti alinamadi")
+                                    if device_response:
+                                        print(f"  Kismi yanit: {device_response.hex()[:50]}")
+                            else:
+                                print(f"  [!] CMD_GET_DEVICEID gonderilemedi")
+                            
+                            print()  # Bos satir
+                            
+                            connected = True
+                            break
                 
                 attempt += 1
                 
