@@ -22,7 +22,7 @@ CMD_UPDATE_APROM = 0x000000A0
 CMD_UPDATE_CONFIG = 0x000000A1
 CMD_READ_CONFIG = 0x000000A2
 CMD_ERASE_ALL = 0x000000A3
-CMD_SYNC_PACKNO = 0x000000A4
+CMD_SYNC_PACKNO = 0x000000A4  # Paket numarası senkronizasyonu
 CMD_GET_FWVER = 0x000000A6
 CMD_RUN_APROM = 0x000000AB
 CMD_RUN_LDROM = 0x000000AC
@@ -156,11 +156,23 @@ def calculate_checksum(data):
     return checksum & 0xFFFF  # 16-bit
 
 def create_packet(cmd, param1=0, param2=0, data=None, is_first_packet=False):
-    """64 byte Nuvoton paketi oluşturur"""
+    """
+    64 byte Nuvoton paketi oluşturur
+    
+    ISP_UART protokolüne göre:
+    - Byte 0-3: CMD
+    - Byte 4-7: Padding (pu8Src += 8 ile atlanır)
+    - Byte 8+: Data veya parametreler
+    """
     packet = bytearray(MAX_PKT_SIZE)
     
     # Byte 0-3: Komut (uint32_t, little-endian)
     packet[0:4] = uint32_to_bytes(cmd)
+    
+    # CMD_SYNC_PACKNO için özel format: Byte 8-11'de paket numarası
+    if cmd == CMD_SYNC_PACKNO:
+        packet[8:12] = uint32_to_bytes(param1)  # Paket numarası
+        return packet
     
     # İlk paket için özel format (CMD_UPDATE_APROM):
     # ISP_UART kodunda: pu8Src += 8 yapılıyor, sonra:
@@ -377,6 +389,20 @@ def send_connect(ser):
         # Tam yanıtı göster (debug için)
         print(f"  Tam Yanıt (ilk 32 byte): {response[:32].hex()}")
         
+        # KRİTİK: Paket numarası senkronizasyonu (ÖNEMLİ!)
+        print(f"\n  [KRİTİK] Paket numarası senkronize ediliyor...")
+        sync_packet = create_packet(CMD_SYNC_PACKNO, 1)  # Paket numarasını 1 yap
+        if send_packet(ser, sync_packet):
+            time.sleep(0.1)
+            sync_response = receive_response(ser, timeout=0.3)
+            if sync_response:
+                sync_packet_no = bytes_to_uint32(sync_response, 4)
+                print(f"  ✓ Paket numarası senkronize edildi: {sync_packet_no}")
+            else:
+                print(f"  ⚠ Paket numarası senkronizasyon yanıtı alınamadı (devam ediliyor)")
+        else:
+            print(f"  ⚠ CMD_SYNC_PACKNO gönderilemedi (devam ediliyor)")
+        
         # Cihaz ID'sini almak için CMD_GET_DEVICEID gönder
         print(f"\n  Cihaz ID'si alınıyor...")
         device_id_packet = create_packet(CMD_GET_DEVICEID)
@@ -410,8 +436,15 @@ def send_connect(ser):
             print(f"  Kısmi yanıt (Hex): {partial.hex()[:50]}")
         return False
 
-def send_update_aprom(ser, bin_data):
-    """APROM güncellemesi yapar"""
+def send_update_aprom(ser, bin_data, erase_before_update=False):
+    """
+    APROM güncellemesi yapar
+    
+    Args:
+        ser: Serial port
+        bin_data: Binary firmware verisi
+        erase_before_update: Güncelleme öncesi tam silme yap (CMD_ERASE_ALL)
+    """
     total_size = len(bin_data)
     start_address = 0x00000000  # APROM başlangıç adresi
     
@@ -420,6 +453,25 @@ def send_update_aprom(ser, bin_data):
     print(f"{'='*60}")
     print(f"Dosya boyutu: {total_size} byte")
     print(f"Başlangıç adresi: 0x{start_address:08X}")
+    
+    # Güncelleme öncesi tam silme (opsiyonel ama önerilen)
+    if erase_before_update:
+        print(f"\n[ÖNEMLİ] Güncelleme öncesi tam silme yapılıyor...")
+        print(f"  ⚠️  UYARI: Bu işlem tüm APROM'u silecek!")
+        erase_packet = create_packet(CMD_ERASE_ALL)
+        if send_packet(ser, erase_packet):
+            print(f"  ✓ CMD_ERASE_ALL gönderildi")
+            # Silme işlemi için bekle (Flash silme zaman alır)
+            time.sleep(1.0)  # 1 saniye bekle
+            erase_response = receive_response(ser, timeout=2.0)
+            if erase_response:
+                erase_packet_no = bytes_to_uint32(erase_response, 4)
+                print(f"  ✓ Silme tamamlandı, Yanıt Paket No: {erase_packet_no}")
+            else:
+                print(f"  ⚠ Silme yanıtı alınamadı (devam ediliyor)")
+        else:
+            print(f"  ⚠ CMD_ERASE_ALL gönderilemedi (devam ediliyor)")
+        print()
     
     # İlk paket: CMD_UPDATE_APROM + adres + boyut
     print(f"\n[1/3] CMD_UPDATE_APROM (başlangıç) gönderiliyor...")
@@ -486,28 +538,47 @@ def send_update_aprom(ser, bin_data):
     
     # Güncelleme sonrası APROM'a geçiş ve reset
     print(f"\n[SON] CMD_RUN_APROM gönderiliyor (reset için)...")
+    print(f"  → Bu komut bootloader'ı resetleyecek ve APROM'a (0x00000000) atlayacak")
+    print(f"  → Yeni firmware çalışmaya başlayacak")
+    
     run_aprom_packet = create_packet(CMD_RUN_APROM)
     
     if send_packet(ser, run_aprom_packet):
         print(f"✓ CMD_RUN_APROM gönderildi")
-        print(f"  → Bootloader reset atacak ve yeni firmware çalışacak")
-        print(f"  → Reset sonrası LED yanıp sönmeli")
         
         # Reset'in gerçekleşmesi için bekle
-        time.sleep(1.0)
-        
-        # Reset sonrası UART'tan mesaj gelip gelmediğini kontrol et
-        print(f"\nReset sonrası kontrol ediliyor...")
+        # CMD_RUN_APROM gönderildikten sonra bootloader reset atar
+        # Port kapanabilir, bu normaldir
         time.sleep(0.5)
         
-        if ser.in_waiting > 0:
-            response = ser.read(ser.in_waiting)
-            print(f"✓ Reset sonrası mesaj alındı: {response[:50].decode('ascii', errors='ignore')}")
+        # Port hala açık mı kontrol et
+        if ser.is_open:
+            # Reset sonrası UART'tan mesaj gelip gelmediğini kontrol et
+            print(f"\nReset sonrası kontrol ediliyor...")
+            time.sleep(1.0)
+            
+            if ser.in_waiting > 0:
+                response = ser.read(ser.in_waiting)
+                ascii_text = response.decode('ascii', errors='ignore')
+                print(f"✓ Reset sonrası mesaj alındı:")
+                print(f"  {ascii_text[:100]}")
+                
+                # Yeni firmware'den mesaj geliyor mu kontrol et
+                if "CPU @" in ascii_text or "Bootloader" not in ascii_text:
+                    print(f"  → Yeni firmware çalışıyor gibi görünüyor!")
+                else:
+                    print(f"  ⚠ Bootloader mesajı geliyor (firmware çalışmıyor olabilir)")
+            else:
+                print(f"⚠ Reset sonrası mesaj gelmedi")
+                print(f"  → Port kapalı olabilir (normal)")
+                print(f"  → Veya firmware çalışmıyor olabilir")
         else:
-            print(f"⚠ Reset sonrası mesaj gelmedi (normal olabilir)")
+            print(f"⚠ Port kapandı (reset atıldı, normal)")
+            print(f"  → Yeni firmware çalışıyor olmalı")
     else:
-        print(f"⚠ CMD_RUN_APROM gönderilemedi (manuel reset gerekebilir)")
+        print(f"⚠ CMD_RUN_APROM gönderilemedi")
         print(f"  → Kartı manuel olarak reset yapın")
+        print(f"  → Reset sonrası yeni firmware çalışmalı")
     
     return True
 
@@ -712,7 +783,9 @@ def main():
         time.sleep(0.1)
         
         # APROM güncellemesi
-        if send_update_aprom(ser, bin_data):
+        # APROM güncellemesi yap
+        # erase_before_update=True: Güncelleme öncesi tam silme (önerilen ama dikkatli kullanın!)
+        if send_update_aprom(ser, bin_data, erase_before_update=False):
             print("\n✓✓✓ Güncelleme başarılı! ✓✓✓")
         else:
             print("\n✗ Güncelleme başarısız")
