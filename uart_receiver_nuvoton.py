@@ -119,7 +119,7 @@ def create_packet(cmd, param1=0, param2=0, data=None, is_first_packet=False):
     
     return packet
 
-def send_packet(ser, packet):
+def send_packet(ser, packet, retry=False):
     """64 byte paketi gönderir"""
     if len(packet) != MAX_PKT_SIZE:
         print(f"⚠ HATA: Paket boyutu {len(packet)} byte, {MAX_PKT_SIZE} byte olmalı!")
@@ -170,9 +170,19 @@ def send_packet(ser, packet):
                 if (i + 1) % 8 == 0:
                     ser.flush()
                     time.sleep(0.001)
-            except serial.SerialTimeoutException:
-                print(f"⚠ Byte {i} timeout, devam ediliyor...")
-                total_written += 1  # Varsayalım ki yazıldı
+            except (serial.SerialTimeoutException, serial.SerialException, OSError) as e:
+                # I/O hatası - port donmuş olabilir
+                print(f"⚠ Byte {i} hatası: {e}")
+                # Port'u yeniden açmayı dene
+                try:
+                    ser.close()
+                    time.sleep(0.5)
+                    ser.open()
+                    time.sleep(0.3)
+                except:
+                    pass
+                # Devam et, bir sonraki byte'ı dene
+                total_written += 1
         
         if total_written != MAX_PKT_SIZE:
             print(f"⚠ Uyarı: {total_written}/{MAX_PKT_SIZE} byte yazıldı")
@@ -190,8 +200,8 @@ def send_packet(ser, packet):
         
         return True
         
-    except serial.SerialTimeoutException as e:
-        print(f"⚠ Write timeout: {e}")
+    except (serial.SerialTimeoutException, serial.SerialException, OSError) as e:
+        print(f"⚠ Port hatası: {e}")
         print(f"  → Port yeniden açılıyor...")
         # Port'u yeniden açmayı dene
         try:
@@ -200,15 +210,16 @@ def send_packet(ser, packet):
             ser.open()
             time.sleep(0.3)
             print(f"  ✓ Port yeniden açıldı")
-            # Tekrar dene
-            return send_packet(ser, packet)
+            # Tekrar dene (sadece 1 kez)
+            if not retry:
+                return send_packet(ser, packet, retry=True)
+            else:
+                return False
         except Exception as e2:
             print(f"  ✗ Port yeniden açılamadı: {e2}")
             return False
     except Exception as e:
         print(f"✗ Paket gönderme hatası: {e}")
-        import traceback
-        traceback.print_exc()
         return False
 
 def receive_response(ser, timeout=1.0):
@@ -494,9 +505,30 @@ def main():
         
         while attempt < max_attempts and not connected:
             try:
+                # Port durumunu kontrol et
+                if not ser.is_open:
+                    print(f"⚠ Port kapalı, yeniden açılıyor...")
+                    try:
+                        ser.open()
+                        time.sleep(0.3)
+                    except Exception as e:
+                        print(f"  ✗ Port açılamadı: {e}")
+                        time.sleep(1.0)
+                        continue
+                
                 # Buffer temizle
-                ser.reset_input_buffer()
-                ser.reset_output_buffer()
+                try:
+                    ser.reset_input_buffer()
+                    ser.reset_output_buffer()
+                except:
+                    # Buffer temizleme hatası, port'u yeniden aç
+                    try:
+                        ser.close()
+                        time.sleep(0.5)
+                        ser.open()
+                        time.sleep(0.3)
+                    except:
+                        pass
                 
                 # CMD_CONNECT gönder
                 if send_packet(ser, connect_packet):
@@ -536,6 +568,21 @@ def main():
                 
                 # Kısa bekleme (CPU kullanımını azaltmak için)
                 time.sleep(0.01)
+                
+            except (serial.SerialException, OSError) as e:
+                # Port I/O hatası - port'u yeniden aç
+                print(f"⚠ Port I/O hatası: {e}, yeniden açılıyor...")
+                try:
+                    ser.close()
+                    time.sleep(0.5)
+                    ser.open()
+                    time.sleep(0.3)
+                    print(f"  ✓ Port yeniden açıldı")
+                except Exception as e2:
+                    print(f"  ✗ Port açılamadı: {e2}")
+                    time.sleep(1.0)
+                attempt += 1
+                continue
                 
             except KeyboardInterrupt:
                 print("\n\nProgram sonlandırılıyor...")
