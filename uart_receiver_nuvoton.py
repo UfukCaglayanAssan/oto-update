@@ -481,39 +481,59 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
     if response:
         packet_no = bytes_to_uint32(response, 4)
         print(f"[OK] Yanit alindi, Paket No: {packet_no}")
+        # NOT: Bootloader paket numarasini her yanitta 2 artiriyor
+        # CMD_ERASE_ALL sonrasi: 6
+        # Ilk CMD_UPDATE_APROM sonrasi: 8 (beklenen)
     
-    # Devam paketleri (56 byte veri her pakette)
-    data_offset = 48  # İlk pakette 48 byte gönderildi
-    packet_num = 2
-    expected_packet_no = 2  # Beklenen yanıt paket numarası
-    
-    while data_offset < total_size:
-        # 56 byte veri al
-        chunk_data = bin_data[data_offset:data_offset+56]
-        chunk_len = len(chunk_data)
-        
-        # Paketi 64 byte'a tamamla
-        packet = create_packet(CMD_UPDATE_APROM, packet_num, 0, chunk_data)
-        
-        print(f"[{packet_num}] Paket gönderiliyor... ({chunk_len} byte veri, offset: {data_offset})")
-        
-        if not send_packet(ser, packet):
-            print(f"✗ Paket {packet_num} gönderilemedi")
-            return False
-        
-        # Yanıt bekle
-        response = receive_response(ser, timeout=1.0)
-        if response:
-            resp_packet_no = bytes_to_uint32(response, 4)
-            checksum_resp = (response[1] << 8) | response[0]
-            
-            # Paket numarası kontrolü
-            if resp_packet_no == expected_packet_no:
-                print(f"  ✓ Yanıt: Paket No {resp_packet_no} (Checksum: 0x{checksum_resp:04X})")
-            else:
-                print(f"  ⚠ Yanıt: Paket No {resp_packet_no} (Beklenen: {expected_packet_no}, Checksum: 0x{checksum_resp:04X})")
-            
-            expected_packet_no += 1
+    # Devam paketleri (56 byte veri her pakette)
+    data_offset = 48  # Ilk pakette 48 byte gonderildi
+    packet_num = 2
+    
+    # NOT: ISP_UART kodunda paket numarasi her yanitta 2 artiriliyor (++u32PackNo; u32PackNo++;)
+    # CMD_CONNECT: 2
+    # CMD_SYNC_PACKNO: 2 (ama kod 4 yapmali, bootloader bug olabilir)
+    # CMD_GET_DEVICEID: 6
+    # CMD_ERASE_ALL: 6
+    # Ilk CMD_UPDATE_APROM: 8
+    # Devam paketleri: 10, 12, 14, 16, ...
+    # Bu yuzden expected_packet_no'yu 8'den baslatip her yanitta 2 artiriyoruz
+    expected_packet_no = 10  # Ilk devam paketi sonrasi beklenen (CMD_ERASE_ALL=6, ilk UPDATE=8, ilk devam=10)
+    
+    while data_offset < total_size:
+        # 56 byte veri al
+        chunk_data = bin_data[data_offset:data_offset+56]
+        chunk_len = len(chunk_data)
+        
+        # Paketi 64 byte'a tamamla
+        packet = create_packet(CMD_UPDATE_APROM, packet_num, 0, chunk_data)
+        
+        print(f"[{packet_num}] Paket gonderiliyor... ({chunk_len} byte veri, offset: {data_offset})")
+        
+        if not send_packet(ser, packet):
+            print(f"[X] Paket {packet_num} gonderilemedi")
+            return False
+        
+        # Yanit bekle
+        response = receive_response(ser, timeout=1.0)
+        if response:
+            resp_packet_no = bytes_to_uint32(response, 4)
+            checksum_resp = (response[1] << 8) | response[0]
+            
+            # Paket numarasi kontrolu (bootloader her yanitta 2 artiriyor)
+            if resp_packet_no == expected_packet_no:
+                print(f"  [OK] Yanit: Paket No {resp_packet_no} (Checksum: 0x{checksum_resp:04X})")
+            else:
+                # Paket numarasi uyumsuzlugu - bootloader'in gercek paket numarasini kullan
+                diff = resp_packet_no - expected_packet_no
+                if abs(diff) <= 4:
+                    print(f"  [!] Yanit: Paket No {resp_packet_no} (Beklenen: {expected_packet_no}, Fark: {diff:+d})")
+                    # Bootloader'in gercek paket numarasini kullan
+                    expected_packet_no = resp_packet_no
+                else:
+                    print(f"  [!] Yanit: Paket No {resp_packet_no} (Beklenen: {expected_packet_no}, Checksum: 0x{checksum_resp:04X})")
+            
+            # Bootloader her yanitta paket numarasini 2 artiriyor
+            expected_packet_no += 2
         
         data_offset += chunk_len
         packet_num += 1
