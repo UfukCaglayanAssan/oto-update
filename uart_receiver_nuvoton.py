@@ -350,6 +350,32 @@ def send_update_aprom(ser, bin_data):
     print(f"\n{'='*60}")
     print(f"✓✓✓ Güncelleme tamamlandı! ✓✓✓")
     print(f"{'='*60}")
+    
+    # Güncelleme sonrası APROM'a geçiş ve reset
+    print(f"\n[SON] CMD_RUN_APROM gönderiliyor (reset için)...")
+    run_aprom_packet = create_packet(CMD_RUN_APROM)
+    
+    if send_packet(ser, run_aprom_packet):
+        print(f"✓ CMD_RUN_APROM gönderildi")
+        print(f"  → Bootloader reset atacak ve yeni firmware çalışacak")
+        print(f"  → Reset sonrası LED yanıp sönmeli")
+        
+        # Reset'in gerçekleşmesi için bekle
+        time.sleep(1.0)
+        
+        # Reset sonrası UART'tan mesaj gelip gelmediğini kontrol et
+        print(f"\nReset sonrası kontrol ediliyor...")
+        time.sleep(0.5)
+        
+        if ser.in_waiting > 0:
+            response = ser.read(ser.in_waiting)
+            print(f"✓ Reset sonrası mesaj alındı: {response[:50].decode('ascii', errors='ignore')}")
+        else:
+            print(f"⚠ Reset sonrası mesaj gelmedi (normal olabilir)")
+    else:
+        print(f"⚠ CMD_RUN_APROM gönderilemedi (manuel reset gerekebilir)")
+        print(f"  → Kartı manuel olarak reset yapın")
+    
     return True
 
 def main():
