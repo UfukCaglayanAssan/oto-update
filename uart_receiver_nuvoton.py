@@ -87,24 +87,35 @@ def calculate_checksum(data):
         checksum += byte
     return checksum & 0xFFFF  # 16-bit
 
-def create_packet(cmd, param1=0, param2=0, data=None):
+def create_packet(cmd, param1=0, param2=0, data=None, is_first_packet=False):
     """64 byte Nuvoton paketi oluşturur"""
     packet = bytearray(MAX_PKT_SIZE)
     
     # Byte 0-3: Komut (uint32_t, little-endian)
     packet[0:4] = uint32_to_bytes(cmd)
     
-    # Byte 4-7: Parametre 1 (uint32_t, little-endian)
-    packet[4:8] = uint32_to_bytes(param1)
-    
-    # Byte 8-11: Parametre 2 (uint32_t, little-endian) - eğer varsa
-    if param2 != 0:
-        packet[8:12] = uint32_to_bytes(param2)
-    
-    # Byte 8-63: Veri (56 byte)
-    if data:
-        data_len = min(len(data), 56)  # Maksimum 56 byte veri
-        packet[8:8+data_len] = data[:data_len]
+    # İlk paket için özel format (CMD_UPDATE_APROM):
+    # ISP_UART kodunda: pu8Src += 8 yapılıyor, sonra:
+    # Byte 8-11: Address (inpw(pu8Src))
+    # Byte 12-15: TotalLen (inpw(pu8Src + 4))
+    # Byte 16-63: Data (48 byte)
+    if is_first_packet and param2 != 0:
+        # Byte 8-11: Address
+        packet[8:12] = uint32_to_bytes(param1)
+        # Byte 12-15: TotalLen
+        packet[12:16] = uint32_to_bytes(param2)
+        # Byte 16-63: Veri (48 byte)
+        if data:
+            data_len = min(len(data), 48)  # İlk pakette maksimum 48 byte veri
+            packet[16:16+data_len] = data[:data_len]
+    else:
+        # Devam paketleri için:
+        # Byte 0-3: CMD
+        # Byte 4-7: İgnore edilir (bootloader kullanmıyor)
+        # Byte 8-63: Veri (56 byte) - pu8Src += 8 yapıldıktan sonra byte 8'den başlıyor
+        if data:
+            data_len = min(len(data), 56)  # Devam paketlerinde maksimum 56 byte veri
+            packet[8:8+data_len] = data[:data_len]
     
     return packet
 
@@ -299,8 +310,8 @@ def send_update_aprom(ser, bin_data):
     
     # İlk paket: CMD_UPDATE_APROM + adres + boyut
     print(f"\n[1/3] CMD_UPDATE_APROM (başlangıç) gönderiliyor...")
-    first_data = bin_data[:52] if len(bin_data) >= 52 else bin_data  # İlk 52 byte
-    first_packet = create_packet(CMD_UPDATE_APROM, start_address, total_size, first_data)
+    first_data = bin_data[:48] if len(bin_data) >= 48 else bin_data  # İlk 48 byte (byte 16-63)
+    first_packet = create_packet(CMD_UPDATE_APROM, start_address, total_size, first_data, is_first_packet=True)
     
     if not send_packet(ser, first_packet):
         print("✗ İlk paket gönderilemedi")
@@ -315,7 +326,7 @@ def send_update_aprom(ser, bin_data):
         print(f"✓ Yanıt alındı, Paket No: {packet_no}")
     
     # Devam paketleri (56 byte veri her pakette)
-    data_offset = 52
+    data_offset = 48  # İlk pakette 48 byte gönderildi
     packet_num = 2
     
     while data_offset < total_size:
