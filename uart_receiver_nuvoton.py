@@ -417,29 +417,80 @@ def main():
     print()
     
     try:
-        print("⚠️  ÖNEMLİ: Bootloader sadece 300ms içinde CMD_CONNECT bekliyor!")
-        print("⚠️  Reset sonrası HEMEN gönderilecek!")
+        print("⚠️  ÖNEMLİ: Bootloader sadece reset sonrası 300ms içinde aktif!")
+        print("⚠️  Script sürekli CMD_CONNECT gönderecek, reset yapınca yakalayacak...")
         print()
-        print("Kartı RESET yapın, script otomatik olarak CMD_CONNECT gönderecek...")
-        print("(3 saniye içinde reset yapın)")
+        print("Kartı RESET yapın (istediğiniz zaman)")
+        print("Script otomatik olarak bootloader'ı yakalayacak...")
         print()
+        print("Çıkmak için Ctrl+C tuşlarına basın\n")
         
-        # 3 saniye geri sayım
-        for i in range(3, 0, -1):
-            print(f"  {i}...")
-            time.sleep(1.0)
+        # Sürekli CMD_CONNECT gönder (reset sonrası yakalamak için)
+        max_attempts = 1000  # Maksimum deneme sayısı
+        attempt = 0
+        connected = False
         
-        print("\n⚡ RESET BUTONUNA BASIN VE HEMEN BIRAKIN! ⚡")
-        print("⚡ CMD_CONNECT gönderiliyor... ⚡\n")
+        # CMD_CONNECT paketi hazırla
+        connect_packet = create_packet(CMD_CONNECT)
         
-        # HEMEN CMD_CONNECT gönder (reset sonrası 300ms içinde)
-        time.sleep(0.05)  # Çok kısa bekleme (reset'in algılanması için)
+        print("🔄 Sürekli CMD_CONNECT gönderiliyor...")
+        print("   (Reset yapınca bootloader yakalanacak)\n")
         
-        # CMD_CONNECT gönder
-        if not send_connect(ser):
-            print("\n✗ CMD_CONNECT başarısız, güncelleme yapılamaz")
-            print("  → Reset sonrası çok geç gönderilmiş olabilir")
-            print("  → Tekrar deneyin, reset sonrası HEMEN gönderilmeli")
+        while attempt < max_attempts and not connected:
+            try:
+                # Buffer temizle
+                ser.reset_input_buffer()
+                ser.reset_output_buffer()
+                
+                # CMD_CONNECT gönder
+                if send_packet(ser, connect_packet):
+                    # Kısa bekleme (bootloader yanıtı için)
+                    time.sleep(0.01)
+                    
+                    # Yanıt var mı kontrol et
+                    if ser.in_waiting >= 4:  # En az 4 byte yanıt bekliyoruz
+                        response = receive_response(ser, timeout=0.1)
+                        
+                        if response and len(response) >= 64:
+                            # Yanıtın bootloader'dan mı geldiğini kontrol et
+                            first_bytes = response[:4]
+                            is_ascii = all(32 <= b <= 126 for b in first_bytes[:4])
+                            
+                            if not is_ascii:
+                                # Bootloader yanıtı!
+                                checksum = (response[1] << 8) | response[0]
+                                packet_no = bytes_to_uint32(response, 4)
+                                aprom_size = bytes_to_uint32(response, 8)
+                                dataflash_addr = bytes_to_uint32(response, 12)
+                                
+                                print(f"\n✓✓✓ BOOTLOADER YAKALANDI! ✓✓✓")
+                                print(f"  Checksum: 0x{checksum:04X}")
+                                print(f"  Paket No: {packet_no}")
+                                print(f"  APROM Boyutu: {aprom_size} byte (0x{aprom_size:08X})")
+                                print(f"  DataFlash Adresi: 0x{dataflash_addr:08X}\n")
+                                
+                                connected = True
+                                break
+                
+                attempt += 1
+                
+                # Her 100 denemede bir durum göster
+                if attempt % 100 == 0:
+                    print(f"  Deneme: {attempt}... (Reset yapın)")
+                
+                # Kısa bekleme (CPU kullanımını azaltmak için)
+                time.sleep(0.01)
+                
+            except KeyboardInterrupt:
+                print("\n\nProgram sonlandırılıyor...")
+                return
+            except Exception as e:
+                # Hataları görmezden gel, devam et
+                pass
+        
+        if not connected:
+            print(f"\n✗ Bootloader yakalanamadı ({max_attempts} deneme)")
+            print("  → Reset yapıldı mı kontrol edin")
             return
         
         time.sleep(0.1)
