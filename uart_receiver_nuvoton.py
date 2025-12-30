@@ -857,3 +857,4 @@ def main():
         print("Port kapatildi.")
 
 if __name__ == "__main__":
+    main()
