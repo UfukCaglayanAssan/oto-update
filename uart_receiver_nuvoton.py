@@ -105,17 +105,17 @@ def open_serial_port(port_name=None, baud_rate=BAUD_RATE):
         
         # Port kullanımını kontrol et
         import subprocess
-        try:
-            result = subprocess.run(['lsof', port_name], capture_output=True, text=True)
-            if result.returncode == 0 and result.stdout:
-                print("⚠️  Port başka bir program tarafından kullanılıyor:")
-                print(result.stdout)
-                print()
-                print("Çözüm:")
-                print("  1. Diğer programı kapatın (uart_listener.py gibi)")
-                print("  2. Veya farklı bir port kullanın")
-        except:
-            pass
+        try:
+            result = subprocess.run(['lsof', port_name], capture_output=True, text=True)
+            if result.returncode == 0 and result.stdout:
+                print("⚠ Port baska bir program tarafindan kullaniliyor:")
+                print(result.stdout)
+                print()
+                print("Cozum:")
+                print("  1. Diger programi kapatin (uart_listener.py gibi)")
+                print("  2. Veya farkli bir port kullanin")
+        except:
+            pass
         
         print("Kontrol edin:")
         print("  1. Port başka bir program tarafından kullanılıyor olabilir")
@@ -603,8 +603,8 @@ def main():
     print()
     
     try:
-        print("⚠️  ÖNEMLİ: Bootloader sadece reset sonrası 300ms içinde aktif!")
-        print("⚠️  Script sürekli CMD_CONNECT gönderecek, reset yapınca yakalayacak...")
+        print("⚠ ONEMLI: Bootloader sadece reset sonrasi 300ms icinde aktif!")
+        print("⚠ Script surekli CMD_CONNECT gonderecek, reset yapinca yakalayacak...")
         print()
         print("Kartı RESET yapın (istediğiniz zaman)")
         print("Script otomatik olarak bootloader'ı yakalayacak...")
@@ -619,8 +619,8 @@ def main():
         # CMD_CONNECT paketi hazırla
         connect_packet = create_packet(CMD_CONNECT)
         
-        print("🔄 Sürekli CMD_CONNECT gönderiliyor...")
-        print("   (Reset yapınca bootloader yakalanacak)\n")
+        print("🔄 Surekli CMD_CONNECT gonderiliyor...")
+        print("   (Reset yapinca bootloader yakalanacak)\n")
         
         while attempt < max_attempts and not connected:
             try:
