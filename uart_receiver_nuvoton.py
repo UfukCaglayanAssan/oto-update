@@ -768,6 +768,9 @@ def main():
             except KeyboardInterrupt:
                 print("\n\nProgram sonlandırılıyor...")
                 break
+            except Exception as e:
+                # Hataları görmezden gel, devam et
+                pass
         
         if not connected:
             print("\n" + "=" * 60)
@@ -790,9 +793,6 @@ def main():
             print("  - Baud rate 115200 mi?")
             print("→ ISP Tool ile bootloader'ın LDROM'a yüklü olduğundan emin olun")
             print("=" * 60)
-            except Exception as e:
-                # Hataları görmezden gel, devam et
-                pass
         
         if not connected:
             print(f"\n✗ Bootloader yakalanamadı ({max_attempts} deneme)")
