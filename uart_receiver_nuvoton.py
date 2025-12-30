@@ -495,8 +495,8 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
 
     print(f"[OK] Ilk paket gonderildi ({len(first_data)} byte veri)")
 
-    # Yanit bekle
-    response = receive_response(ser, timeout=1.0)
+    # Yanit bekle (daha uzun timeout)
+    response = receive_response(ser, timeout=2.0)
     if response:
         packet_no = bytes_to_uint32(response, 4)
         print(f"[OK] Yanit alindi, Paket No: {packet_no}")
@@ -505,14 +505,22 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
         # Ilk CMD_UPDATE_APROM sonrasi: 8 (beklenen)
         # Ilk yanit paket numarasini kullanarak devam paketleri icin beklenen degeri hesapla
         first_response_packet_no = packet_no
-        # Eger paket numarasi cok buyukse, normalize et
+        # Eger paket numarasi cok buyukse, normalize et (byte siralama sorunu)
         if first_response_packet_no > 1000:
+            # Byte 4-5'i oku (16-bit little-endian) - gercek paket numarasi burada
             normalized = response[4] | (response[5] << 8)
             if normalized > 0 and normalized < 1000:
                 first_response_packet_no = normalized
                 print(f"  [!] Ilk paket numarasi normalize edildi: {packet_no} -> {normalized}")
+            else:
+                # Byte 4-7'den oku (32-bit little-endian) - belki byte 6-7'de
+                normalized2 = response[6] | (response[7] << 8)
+                if normalized2 > 0 and normalized2 < 1000:
+                    first_response_packet_no = normalized2
+                    print(f"  [!] Ilk paket numarasi normalize edildi (byte 6-7): {packet_no} -> {normalized2}")
         # Sonraki paket icin beklenen deger: ilk yanit + 2
         expected_packet_no = first_response_packet_no + 2
+        print(f"  Sonraki paket icin beklenen: {expected_packet_no}")
     else:
         print(f"[!] Ilk paket yaniti alinamadi (devam ediliyor)")
         # Ilk yanit alinamadi, varsayilan deger kullan
@@ -537,19 +545,26 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
             print(f"[X] Paket {packet_num} gonderilemedi")
             return False
 
-        # Yanit bekle
-        response = receive_response(ser, timeout=1.0)
+        # Yanit bekle (daha uzun timeout - flash yazma zaman alir)
+        response = receive_response(ser, timeout=2.0)
         if response:
             resp_packet_no = bytes_to_uint32(response, 4)
             checksum_resp = (response[1] << 8) | response[0]
 
-            # Eger paket numarasi cok buyukse, normalize et
+            # Eger paket numarasi cok buyukse, normalize et (byte siralama sorunu)
             if resp_packet_no > 1000:
+                # Byte 4-5'i oku (16-bit little-endian) - gercek paket numarasi burada
                 normalized = response[4] | (response[5] << 8)
                 if normalized > 0 and normalized < 1000:
                     resp_packet_no = normalized
                     if first_response_packet_no is None or first_response_packet_no > 1000:
                         print(f"  [!] Paket numarasi normalize edildi: {resp_packet_no}")
+                else:
+                    # Byte 6-7'den oku
+                    normalized2 = response[6] | (response[7] << 8)
+                    if normalized2 > 0 and normalized2 < 1000:
+                        resp_packet_no = normalized2
+                        print(f"  [!] Paket numarasi normalize edildi (byte 6-7): {resp_packet_no}")
 
             # Paket numarasi kontrolu
             if expected_packet_no is not None:
@@ -571,8 +586,9 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
                 # Paket numarasi takibi yapilmiyor, sadece goster
                 print(f"  [OK] Yanit: Paket No {resp_packet_no} (Checksum: 0x{checksum_resp:04X})")
         else:
-            # Yanit alinamadi (timeout)
-            print(f"  [!] Yanit alinamadi (timeout)")
+            # Yanit alinamadi (timeout) - flash yazma devam ediyor olabilir
+            print(f"  [!] Yanit alinamadi (timeout) - flash yazma devam ediyor olabilir")
+            # Timeout olsa bile devam et (bootloader flash yaziyor olabilir)
 
         data_offset += chunk_len
         packet_num += 1
