@@ -308,13 +308,23 @@ def send_connect(ser):
         print(f"\n  Cihaz ID'si alınıyor...")
         device_id_packet = create_packet(CMD_GET_DEVICEID)
         if send_packet(ser, device_id_packet):
-            time.sleep(0.1)
-            device_response = receive_response(ser, timeout=0.3)
-            if device_response:
+            time.sleep(0.15)  # Biraz daha uzun bekle
+            device_response = receive_response(ser, timeout=0.5)
+            if device_response and len(device_response) >= 64:
                 device_id = bytes_to_uint32(device_response, 8)
-                print(f"  ✓ Cihaz ID: 0x{device_id:08X}")
+                checksum_dev = (device_response[1] << 8) | device_response[0]
+                print(f"  ✓✓✓ CİHAZ ID YAKALANDI! ✓✓✓")
+                print(f"  Cihaz ID: 0x{device_id:08X}")
+                print(f"  Checksum: 0x{checksum_dev:04X}")
+                print(f"  Tam Yanıt (ilk 16 byte): {device_response[:16].hex()}")
             else:
                 print(f"  ⚠ Cihaz ID yanıtı alınamadı")
+                if device_response:
+                    print(f"  Kısmi yanıt: {device_response.hex()[:50]}")
+                else:
+                    print(f"  Input buffer: {ser.in_waiting} byte")
+        else:
+            print(f"  ⚠ CMD_GET_DEVICEID gönderilemedi")
         
         return True
     else:
@@ -555,7 +565,28 @@ def main():
                                 print(f"  Checksum: 0x{checksum:04X}")
                                 print(f"  Paket No: {packet_no}")
                                 print(f"  APROM Boyutu: {aprom_size} byte (0x{aprom_size:08X})")
-                                print(f"  DataFlash Adresi: 0x{dataflash_addr:08X}\n")
+                                print(f"  DataFlash Adresi: 0x{dataflash_addr:08X}")
+                                
+                                # Cihaz ID'sini almak için CMD_GET_DEVICEID gönder
+                                print(f"\n  Cihaz ID'si alınıyor...")
+                                device_id_packet = create_packet(CMD_GET_DEVICEID)
+                                if send_packet(ser, device_id_packet):
+                                    time.sleep(0.15)
+                                    device_response = receive_response(ser, timeout=0.5)
+                                    if device_response and len(device_response) >= 64:
+                                        device_id = bytes_to_uint32(device_response, 8)
+                                        checksum_dev = (device_response[1] << 8) | device_response[0]
+                                        print(f"  ✓✓✓ CİHAZ ID YAKALANDI! ✓✓✓")
+                                        print(f"  Cihaz ID: 0x{device_id:08X}")
+                                        print(f"  Checksum: 0x{checksum_dev:04X}")
+                                    else:
+                                        print(f"  ⚠ Cihaz ID yanıtı alınamadı")
+                                        if device_response:
+                                            print(f"  Kısmi yanıt: {device_response.hex()[:50]}")
+                                else:
+                                    print(f"  ⚠ CMD_GET_DEVICEID gönderilemedi")
+                                
+                                print()  # Boş satır
                                 
                                 connected = True
                                 break
