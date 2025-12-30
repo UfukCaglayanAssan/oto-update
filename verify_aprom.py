@@ -140,7 +140,23 @@ def read_aprom_verify(ser, bin_file, start_addr=0x00000000, size=None):
 
 def main():
     if len(sys.argv) < 2:
-        print("Kullanım: python3 verify_aprom.py <port> [bin_file]")
+        print("=" * 60)
+        print("APROM Doğrulama Scripti")
+        print("=" * 60)
+        print()
+        print("⚠ NOT: Bu script direkt APROM okuma yapmaz!")
+        print("⚠ Nuvoton ISP protokolünde direkt APROM okuma komutu yok.")
+        print()
+        print("Kullanım:")
+        print("  python3 verify_aprom.py <port> [bin_file]")
+        print()
+        print("Örnek:")
+        print("  python3 verify_aprom.py /dev/ttyACM0 NuvotonM26x-Bootloader-Test.bin")
+        print()
+        print("Alternatif:")
+        print("  python3 test_firmware_after_update.py <port>")
+        print("  → Reset sonrası firmware'in çalışıp çalışmadığını kontrol eder")
+        print()
         sys.exit(1)
     
     port_name = sys.argv[1]
