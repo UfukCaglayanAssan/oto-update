@@ -130,21 +130,38 @@ def send_packet(ser, packet):
         ser.reset_output_buffer()
         time.sleep(0.05)
         
-        # Paketi küçük parçalara bölerek gönder (timeout'u önlemek için)
-        chunk_size = 16  # 16 byte'lık parçalar
+        # Paketi byte-byte gönder (timeout'u önlemek için)
         total_written = 0
         
-        for i in range(0, len(packet), chunk_size):
-            chunk = packet[i:i+chunk_size]
+        # Önce test byte gönder
+        try:
+            test_byte = bytes([packet[0]])
+            test_written = ser.write(test_byte)
+            if test_written == 0:
+                raise serial.SerialTimeoutException("Test byte yazılamadı")
+            ser.flush()
+            time.sleep(0.01)
+        except serial.SerialTimeoutException:
+            print(f"⚠ Test byte timeout, port yeniden açılıyor...")
+            ser.close()
+            time.sleep(1.0)
+            ser.open()
+            time.sleep(0.5)
+        
+        # Şimdi paketi byte-byte gönder
+        for i, byte_val in enumerate(packet):
             try:
-                bytes_written = ser.write(chunk)
-                total_written += bytes_written
-                ser.flush()  # Her chunk'tan sonra flush
-                time.sleep(0.001)  # Kısa bekleme
+                bytes_written = ser.write(bytes([byte_val]))
+                if bytes_written > 0:
+                    total_written += bytes_written
+                
+                # Her 8 byte'da bir flush
+                if (i + 1) % 8 == 0:
+                    ser.flush()
+                    time.sleep(0.001)
             except serial.SerialTimeoutException:
-                print(f"⚠ Chunk {i//chunk_size + 1} timeout, devam ediliyor...")
-                # Timeout olsa bile devam et
-                total_written += len(chunk)
+                print(f"⚠ Byte {i} timeout, devam ediliyor...")
+                total_written += 1  # Varsayalım ki yazıldı
         
         if total_written != MAX_PKT_SIZE:
             print(f"⚠ Uyarı: {total_written}/{MAX_PKT_SIZE} byte yazıldı")

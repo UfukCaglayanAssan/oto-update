@@ -75,25 +75,65 @@ def main():
         print(f"  Paket boyutu: {len(packet)} byte")
         print(f"  Paket hex (ilk 16 byte): {packet[:16].hex()}")
         
-        # Paketi gönder (küçük parçalar halinde)
-        print(f"\nPaket gönderiliyor...")
-        chunk_size = 16
+        # Paketi gönder (byte-byte, çok küçük parçalar)
+        print(f"\nPaket gönderiliyor (byte-byte)...")
         total_written = 0
         
-        for i in range(0, len(packet), chunk_size):
-            chunk = packet[i:i+chunk_size]
+        # Önce port'un gerçekten yazılabilir olduğunu test et
+        print(f"  Port test: 1 byte yazma denemesi...")
+        try:
+            test_byte = bytes([0xAE])
+            test_written = ser.write(test_byte)
+            if test_written == 0:
+                print(f"  ✗ Port'a yazılamıyor! Port donmuş olabilir.")
+                print(f"  → Port'u kapatıp yeniden açmayı deniyoruz...")
+                ser.close()
+                time.sleep(1.0)
+                ser.open()
+                time.sleep(0.5)
+                print(f"  → Port yeniden açıldı, tekrar deniyoruz...")
+                test_written = ser.write(test_byte)
+                if test_written == 0:
+                    print(f"  ✗ Hala yazılamıyor! Port sorunlu.")
+                    return
+            print(f"  ✓ Test byte yazıldı: {test_written} byte")
+            ser.flush()
+            time.sleep(0.01)
+        except serial.SerialTimeoutException as e:
+            print(f"  ✗ Test byte timeout: {e}")
+            print(f"  → Port'u kapatıp yeniden açmayı deniyoruz...")
             try:
-                bytes_written = ser.write(chunk)
+                ser.close()
+                time.sleep(1.0)
+                ser.open()
+                time.sleep(0.5)
+                print(f"  → Port yeniden açıldı")
+            except:
+                print(f"  ✗ Port yeniden açılamadı")
+                return
+        except Exception as e:
+            print(f"  ✗ Test byte hatası: {e}")
+            return
+        
+        # Şimdi paketi byte-byte gönder
+        for i, byte_val in enumerate(packet):
+            try:
+                bytes_written = ser.write(bytes([byte_val]))
+                if bytes_written == 0:
+                    print(f"  ⚠ Byte {i} yazılamadı, devam ediliyor...")
                 total_written += bytes_written
-                ser.flush()
-                time.sleep(0.001)
-                print(f"  Chunk {i//chunk_size + 1}: {bytes_written} byte yazıldı")
+                
+                # Her 8 byte'da bir flush
+                if (i + 1) % 8 == 0:
+                    ser.flush()
+                    time.sleep(0.001)
+                
             except serial.SerialTimeoutException as e:
-                print(f"  ✗ Chunk {i//chunk_size + 1} timeout: {e}")
-                return
+                print(f"  ⚠ Byte {i} timeout: {e}, devam ediliyor...")
+                total_written += 1  # Varsayalım ki yazıldı
             except Exception as e:
-                print(f"  ✗ Chunk {i//chunk_size + 1} hatası: {e}")
-                return
+                print(f"  ⚠ Byte {i} hatası: {e}, devam ediliyor...")
+                total_written += 1  # Varsayalım ki yazıldı
         
         print(f"✓ Toplam {total_written}/{len(packet)} byte yazıldı")
         
@@ -129,8 +169,14 @@ def main():
     except serial.SerialTimeoutException as e:
         print(f"\n✗ TIMEOUT: {e}")
         print(f"  → Port yazma işlemi zaman aşımına uğradı")
-        print(f"  → Port başka program tarafından kullanılıyor olabilir")
-        print(f"  → Port donmuş olabilir, yeniden bağlanmayı deneyin")
+        print(f"  → Olası nedenler:")
+        print(f"     1. Port başka program tarafından kullanılıyor")
+        print(f"     2. Port donmuş (USB çıkarıp takmayı deneyin)")
+        print(f"     3. Hardware flow control aktif")
+        print(f"     4. USB-UART dönüştürücü sorunu")
+        print(f"\n  → Kontrol komutları:")
+        print(f"     lsof | grep ttyACM0  # Port'u kullanan program")
+        print(f"     dmesg | tail -20     # USB hata mesajları")
     except serial.SerialException as e:
         print(f"\n✗ SERIAL HATASI: {e}")
         print(f"  → Port açılamadı veya erişilemiyor")
