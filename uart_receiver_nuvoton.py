@@ -755,8 +755,4 @@ def main():
         print("Port kapatıldı.")
 
 if __name__ == "__main__":
-    main()
-
-
-
-şimdi bak
+    main()
