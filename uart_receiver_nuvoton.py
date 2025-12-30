@@ -159,30 +159,35 @@ def send_packet(ser, packet, retry=False):
             ser.open()
             time.sleep(0.5)
         
-        # Şimdi paketi byte-byte gönder
-        for i, byte_val in enumerate(packet):
-            try:
-                bytes_written = ser.write(bytes([byte_val]))
+        # Paketi chunk'lar halinde gönder (daha hızlı ve güvenilir)
+        chunk_size = 16  # 16 byte chunk'lar
+        try:
+            for i in range(0, len(packet), chunk_size):
+                chunk = packet[i:i+chunk_size]
+                bytes_written = ser.write(chunk)
                 if bytes_written > 0:
                     total_written += bytes_written
-                
-                # Her 8 byte'da bir flush
-                if (i + 1) % 8 == 0:
-                    ser.flush()
-                    time.sleep(0.001)
-            except (serial.SerialTimeoutException, serial.SerialException, OSError) as e:
-                # I/O hatası - port donmuş olabilir
-                print(f"⚠ Byte {i} hatası: {e}")
-                # Port'u yeniden açmayı dene
+                ser.flush()  # Her chunk'tan sonra flush
+                time.sleep(0.001)  # Kısa bekleme
+        except (serial.SerialTimeoutException, serial.SerialException, OSError) as e:
+            # I/O hatası - port donmuş olabilir
+            print(f"⚠ Chunk gönderme hatası: {e}")
+            # Port'u yeniden açmayı dene
+            try:
+                ser.close()
+                time.sleep(0.5)
+                ser.open()
+                time.sleep(0.3)
+            except:
+                pass
+            # Kalan byte'ları göndermeyi dene
+            remaining = packet[total_written:]
+            if remaining:
                 try:
-                    ser.close()
-                    time.sleep(0.5)
-                    ser.open()
-                    time.sleep(0.3)
+                    ser.write(remaining)
+                    total_written += len(remaining)
                 except:
                     pass
-                # Devam et, bir sonraki byte'ı dene
-                total_written += 1
         
         if total_written != MAX_PKT_SIZE:
             print(f"⚠ Uyarı: {total_written}/{MAX_PKT_SIZE} byte yazıldı")
@@ -368,6 +373,7 @@ def send_update_aprom(ser, bin_data):
     # Devam paketleri (56 byte veri her pakette)
     data_offset = 48  # İlk pakette 48 byte gönderildi
     packet_num = 2
+    expected_packet_no = 2  # Beklenen yanıt paket numarası
     
     while data_offset < total_size:
         # 56 byte veri al
@@ -387,7 +393,15 @@ def send_update_aprom(ser, bin_data):
         response = receive_response(ser, timeout=1.0)
         if response:
             resp_packet_no = bytes_to_uint32(response, 4)
-            print(f"  ✓ Yanıt: Paket No {resp_packet_no}")
+            checksum_resp = (response[1] << 8) | response[0]
+            
+            # Paket numarası kontrolü
+            if resp_packet_no == expected_packet_no:
+                print(f"  ✓ Yanıt: Paket No {resp_packet_no} (Checksum: 0x{checksum_resp:04X})")
+            else:
+                print(f"  ⚠ Yanıt: Paket No {resp_packet_no} (Beklenen: {expected_packet_no}, Checksum: 0x{checksum_resp:04X})")
+            
+            expected_packet_no += 1
         
         data_offset += chunk_len
         packet_num += 1
