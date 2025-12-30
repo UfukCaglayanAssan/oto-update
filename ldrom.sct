@@ -1,0 +1,16 @@
+;******************************************************************************
+; Scatter File for Bootloader - LDROM Address (0x00100000)
+; Bootloader LDROM'da çalışacak, APROM'a güncelleme yapacak
+;******************************************************************************
+
+LR_IROM1 0x00100000 0x00001000  {    ; LDROM: 4KB, başlangıç 0x00100000
+    ER_IROM1 0x00100000 0x00001000  {  ; Load region
+        *.o (RESET, +First)
+        *(InRoot$$Sections)
+        .ANY (+RO)
+    }
+    RW_IRAM1 0x20000000 0x00008000  {  ; RAM: 32KB
+        .ANY (+RW +ZI)
+    }
+}
+

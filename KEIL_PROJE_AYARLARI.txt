@@ -1,0 +1,55 @@
+KEIL PROJESİ AYARLARI - LDROM ADRESİNE DERLEME
+
+1. KEIL'DE PROJE AÇMA:
+   - Keil MDK-ARM'i açın
+   - File → Open Project
+   - SampleCode/Bootloader/KEIL/ klasöründeki .uvprojx dosyasını açın
+
+2. BOOTLOADER DOSYALARINI EKLEME:
+   - Project penceresinde projeye sağ tıklayın
+   - Add Existing Files to Group
+   - bootloader_handshake.c dosyasını ekleyin
+   - main.c dosyasını düzenleyin (main_bootloader.c içeriğini kullanın)
+
+3. LINKER SCRIPT AYARLARI (LDROM ADRESİ):
+   - Project → Options for Target (Alt+F7)
+   - Linker sekmesine gidin
+   - "Use Memory Layout from Target Dialog" seçeneğini KAPATIN
+   - "Scatter File" seçeneğini seçin
+   - "Edit" butonuna tıklayın veya yeni scatter file oluşturun
+
+4. SCATTER FILE İÇERİĞİ (ldrom.sct):
+   
+   LR_IROM1 0x00100000 0x00001000  {    ; LDROM: 4KB, başlangıç 0x00100000
+       ER_IROM1 0x00100000 0x00001000  {  ; Load region
+           *.o (RESET, +First)
+           *(InRoot$$Sections)
+           .ANY (+RO)
+       }
+       RW_IRAM1 0x20000000 0x00008000  {  ; RAM
+           .ANY (+RW +ZI)
+       }
+   }
+
+5. MEMORY AYARLARI:
+   - Project → Options for Target
+   - Target sekmesi
+   - IROM1: Start = 0x00100000, Size = 0x1000 (4KB)
+   - IRAM1: Start = 0x20000000, Size = 0x8000 (32KB)
+
+6. DERLEME:
+   - Build (F7) veya Rebuild All
+   - .bin dosyası Output klasöründe oluşacak
+
+7. .BIN DOSYASI OLUŞTURMA:
+   - Project → Options for Target
+   - User sekmesi
+   - "After Build" bölümünde:
+     fromelf --bin --output "$L\bootloader.bin" "#L"
+   - Bu komut .bin dosyasını otomatik oluşturur
+
+ÖNEMLİ:
+- Bootloader LDROM'a (0x00100000) derlenmeli
+- APROM'a (0x00000000) yazacak şekilde kodlanmış
+- Handshake: 0x55 0x5A alır, 0xAA yanıt verir
+
