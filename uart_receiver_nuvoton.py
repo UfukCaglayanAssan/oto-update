@@ -281,11 +281,30 @@ def send_connect(ser):
         aprom_size = bytes_to_uint32(response, 8)
         dataflash_addr = bytes_to_uint32(response, 12)
         
+        # Config verileri (Byte 16-31) - ReadData ile doldurulmuş olabilir
+        config_data = response[16:32] if len(response) >= 32 else None
+        
         print(f"✓✓✓ BOOTLOADER YANITI ALINDI! ✓✓✓")
         print(f"  Checksum: 0x{checksum:04X}")
         print(f"  Paket No: {packet_no}")
         print(f"  APROM Boyutu: {aprom_size} byte (0x{aprom_size:08X})")
         print(f"  DataFlash Adresi: 0x{dataflash_addr:08X}")
+        
+        # Tam yanıtı göster (debug için)
+        print(f"  Tam Yanıt (ilk 32 byte): {response[:32].hex()}")
+        
+        # Cihaz ID'sini almak için CMD_GET_DEVICEID gönder
+        print(f"\n  Cihaz ID'si alınıyor...")
+        device_id_packet = create_packet(CMD_GET_DEVICEID)
+        if send_packet(ser, device_id_packet):
+            time.sleep(0.1)
+            device_response = receive_response(ser, timeout=0.3)
+            if device_response:
+                device_id = bytes_to_uint32(device_response, 8)
+                print(f"  ✓ Cihaz ID: 0x{device_id:08X}")
+            else:
+                print(f"  ⚠ Cihaz ID yanıtı alınamadı")
+        
         return True
     else:
         print("✗ Yanıt alınamadı (timeout)")
