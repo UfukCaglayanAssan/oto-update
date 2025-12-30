@@ -632,8 +632,16 @@ def main():
         print("⚠️  ÖNEMLİ: Bootloader sadece reset sonrası 300ms içinde aktif!")
         print("⚠️  Script sürekli CMD_CONNECT gönderecek, reset yapınca yakalayacak...")
         print()
-        print("Kartı RESET yapın (istediğiniz zaman)")
-        print("Script otomatik olarak bootloader'ı yakalayacak...")
+        print("=" * 60)
+        print("ADIMLAR:")
+        print("=" * 60)
+        print("1. Kartı RESET yapın (NRESET butonuna basın)")
+        print("2. Reset yaptıktan HEMEN sonra script bootloader'ı yakalayacak")
+        print("3. Eğer yakalanmazsa:")
+        print("   - Reset'i tekrar yapın")
+        print("   - Port bağlantısını kontrol edin")
+        print("   - Baud rate'in 115200 olduğundan emin olun")
+        print("=" * 60)
         print()
         print("Çıkmak için Ctrl+C tuşlarına basın\n")
         
@@ -678,16 +686,22 @@ def main():
                 # CMD_CONNECT gönder
                 if send_packet(ser, connect_packet):
                     # Kısa bekleme (bootloader yanıtı için)
-                    time.sleep(0.01)
+                    time.sleep(0.005)  # 5ms (daha hızlı)
                     
                     # Yanıt var mı kontrol et
                     if ser.in_waiting >= 4:  # En az 4 byte yanıt bekliyoruz
-                        response = receive_response(ser, timeout=0.1)
+                        response = receive_response(ser, timeout=0.05)  # 50ms timeout
                         
                         if response and len(response) >= 64:
                             # Yanıtın bootloader'dan mı geldiğini kontrol et
                             first_bytes = response[:4]
                             is_ascii = all(32 <= b <= 126 for b in first_bytes[:4])
+                            
+                            # Debug: Her 500 denemede bir yanıtı göster
+                            if attempt % 500 == 0:
+                                print(f"  [DEBUG] Yanıt alındı: {response[:16].hex()}")
+                                ascii_preview = response[:50].decode('ascii', errors='ignore')
+                                print(f"  [DEBUG] ASCII: {ascii_preview[:30]}")
                             
                             if not is_ascii:
                                 # Bootloader yanıtı!
@@ -728,12 +742,13 @@ def main():
                 
                 attempt += 1
                 
-                # Her 100 denemede bir durum göster
-                if attempt % 100 == 0:
-                    print(f"  Deneme: {attempt}... (Reset yapın)")
+                # Her 200 denemede bir durum göster (daha az log)
+                if attempt % 200 == 0:
+                    elapsed = attempt * 0.015  # Yaklaşık süre
+                    print(f"  Deneme: {attempt}... (Geçen süre: {elapsed:.1f}s) - Reset yapın!")
                 
                 # Kısa bekleme (CPU kullanımını azaltmak için)
-                time.sleep(0.01)
+                time.sleep(0.015)  # 15ms (300ms penceresini yakalamak için)
                 
             except (serial.SerialException, OSError) as e:
                 # Port I/O hatası - port'u yeniden aç
@@ -752,7 +767,29 @@ def main():
                 
             except KeyboardInterrupt:
                 print("\n\nProgram sonlandırılıyor...")
-                return
+                break
+        
+        if not connected:
+            print("\n" + "=" * 60)
+            print("⚠️  BOOTLOADER YAKALANAMADI!")
+            print("=" * 60)
+            print(f"\nToplam deneme: {attempt}")
+            print(f"Geçen süre: ~{attempt * 0.015:.1f} saniye")
+            print("\nOlası nedenler:")
+            print("1. ✗ Reset yapılmadı veya çok geç yapıldı (300ms penceresi kaçırıldı)")
+            print("2. ✗ Bootloader LDROM'da değil (Config0 ayarları kontrol edilmeli)")
+            print("3. ✗ Port bağlantısı sorunlu (TX/RX pinleri kontrol edin)")
+            print("4. ✗ Baud rate uyumsuz (115200 olmalı)")
+            print("5. ✗ Bootloader yüklü değil (ISP Tool ile LDROM'a yüklenmeli)")
+            print("\nÇözüm önerileri:")
+            print("→ Reset butonuna basın ve HEMEN bırakın (basılı tutmayın!)")
+            print("→ ISP Tool ile Config0'ı kontrol edin (LDROM boot olmalı)")
+            print("→ Port bağlantısını kontrol edin:")
+            print("  - TX → RX bağlantısı doğru mu?")
+            print("  - GND bağlı mı?")
+            print("  - Baud rate 115200 mi?")
+            print("→ ISP Tool ile bootloader'ın LDROM'a yüklü olduğundan emin olun")
+            print("=" * 60)
             except Exception as e:
                 # Hataları görmezden gel, devam et
                 pass
