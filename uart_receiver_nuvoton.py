@@ -14,7 +14,7 @@ import os
 # UART ayarları
 BAUD_RATE = 115200
 TIMEOUT = 2
-WRITE_TIMEOUT = 5
+WRITE_TIMEOUT = 2  # Daha kısa timeout (2 saniye)
 MAX_PKT_SIZE = 64  # Nuvoton protokolü: SABİT 64 byte
 
 # Nuvoton ISP Komutları (isp_user.h'den)
@@ -200,111 +200,93 @@ def create_packet(cmd, param1=0, param2=0, data=None, is_first_packet=False):
     return packet
 
 def send_packet(ser, packet, retry=False):
-    """64 byte paketi gönderir"""
+    """64 byte paketi gönderir - Basitleştirilmiş ve güvenilir versiyon"""
     if len(packet) != MAX_PKT_SIZE:
         print(f"⚠ HATA: Paket boyutu {len(packet)} byte, {MAX_PKT_SIZE} byte olmalı!")
         return False
     
     try:
-        # Port yazılabilir mi kontrol et
-        if not ser.writable():
-            print(f"✗ Port yazılabilir değil!")
-            return False
-        
-        # Output buffer kontrolü
-        if ser.out_waiting > 100:
-            print(f"⚠ Output buffer dolu ({ser.out_waiting} byte), temizleniyor...")
-            ser.reset_output_buffer()
-            time.sleep(0.1)
-        
-        # Buffer temizle
-        ser.reset_output_buffer()
-        time.sleep(0.05)
-        
-        # Paketi byte-byte gönder (timeout'u önlemek için)
-        total_written = 0
-        
-        # Önce test byte gönder
-        try:
-            test_byte = bytes([packet[0]])
-            test_written = ser.write(test_byte)
-            if test_written == 0:
-                raise serial.SerialTimeoutException("Test byte yazılamadı")
-            ser.flush()
-            time.sleep(0.01)
-        except serial.SerialTimeoutException:
-            print(f"⚠ Test byte timeout, port yeniden açılıyor...")
-            ser.close()
-            time.sleep(1.0)
-            ser.open()
-            time.sleep(0.5)
-        
-        # Paketi chunk'lar halinde gönder (daha hızlı ve güvenilir)
-        chunk_size = 16  # 16 byte chunk'lar
-        try:
-            for i in range(0, len(packet), chunk_size):
-                chunk = packet[i:i+chunk_size]
-                bytes_written = ser.write(chunk)
-                if bytes_written > 0:
-                    total_written += bytes_written
-                ser.flush()  # Her chunk'tan sonra flush
-                time.sleep(0.001)  # Kısa bekleme
-        except (serial.SerialTimeoutException, serial.SerialException, OSError) as e:
-            # I/O hatası - port donmuş olabilir
-            print(f"⚠ Chunk gönderme hatası: {e}")
-            # Port'u yeniden açmayı dene
-            try:
-                ser.close()
-                time.sleep(0.5)
-                ser.open()
-                time.sleep(0.3)
-            except:
-                pass
-            # Kalan byte'ları göndermeyi dene
-            remaining = packet[total_written:]
-            if remaining:
-                try:
-                    ser.write(remaining)
-                    total_written += len(remaining)
-                except:
-                    pass
-        
-        if total_written != MAX_PKT_SIZE:
-            print(f"⚠ Uyarı: {total_written}/{MAX_PKT_SIZE} byte yazıldı")
-            # Yine de devam et
-        
-        # Flush işlemi (timeout ile)
-        start_time = time.time()
-        while ser.out_waiting > 0:
-            if time.time() - start_time > 1.0:  # 1 saniye timeout
-                print(f"⚠ Flush timeout, kalan: {ser.out_waiting} byte")
-                break
-            time.sleep(0.01)
-        
-        ser.flush()
-        
-        return True
-        
-    except (serial.SerialTimeoutException, serial.SerialException, OSError) as e:
-        print(f"⚠ Port hatası: {e}")
-        print(f"  → Port yeniden açılıyor...")
-        # Port'u yeniden açmayı dene
-        try:
-            ser.close()
-            time.sleep(0.5)
-            ser.open()
-            time.sleep(0.3)
-            print(f"  ✓ Port yeniden açıldı")
-            # Tekrar dene (sadece 1 kez)
+        # Port durumunu kontrol et
+        if not ser.is_open:
             if not retry:
-                return send_packet(ser, packet, retry=True)
+                try:
+                    ser.open()
+                    time.sleep(0.2)
+                except:
+                    return False
             else:
                 return False
-        except Exception as e2:
-            print(f"  ✗ Port yeniden açılamadı: {e2}")
+        
+        if not ser.writable():
             return False
+        
+        # Buffer kontrolü ve temizleme
+        try:
+            out_waiting = ser.out_waiting
+            # Buffer çok doluysa temizle (1000 byte'dan fazla)
+            if out_waiting > 1000:
+                ser.reset_output_buffer()
+                time.sleep(0.05)
+            elif out_waiting > 0:
+                # Küçük buffer varsa kısa bekle
+                time.sleep(0.01)
+        except:
+            pass
+        
+        # Paketi tek seferde gönder (en güvenilir yöntem)
+        try:
+            bytes_written = ser.write(packet)
+            
+            # Flush işlemi (kısa timeout)
+            start_time = time.time()
+            while ser.out_waiting > 0:
+                if time.time() - start_time > 0.3:  # 300ms timeout
+                    # Buffer çok doluysa temizle ve devam et
+                    if ser.out_waiting > 1000:
+                        ser.reset_output_buffer()
+                    break
+                time.sleep(0.01)
+            
+            ser.flush()
+            
+            if bytes_written == MAX_PKT_SIZE:
+                return True
+            else:
+                # Kısmi yazma - kalan byte'ları gönder
+                if bytes_written < MAX_PKT_SIZE:
+                    remaining = packet[bytes_written:]
+                    try:
+                        ser.write(remaining)
+                        ser.flush()
+                        return True
+                    except:
+                        return False
+                return True
+                
+        except (serial.SerialTimeoutException, serial.SerialException, OSError) as e:
+            # Port hatası - yeniden açmayı dene
+            if not retry:
+                try:
+                    ser.close()
+                    time.sleep(0.3)
+                    ser.open()
+                    time.sleep(0.2)
+                    return send_packet(ser, packet, retry=True)
+                except:
+                    return False
+            return False
+            
     except Exception as e:
-        print(f"✗ Paket gönderme hatası: {e}")
+        # Genel hata - son bir deneme
+        if not retry:
+            try:
+                ser.close()
+                time.sleep(0.3)
+                ser.open()
+                time.sleep(0.2)
+                return send_packet(ser, packet, retry=True)
+            except:
+                return False
         return False
 
 def receive_response(ser, timeout=1.0):
