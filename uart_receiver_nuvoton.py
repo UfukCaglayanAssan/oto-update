@@ -11,11 +11,11 @@ import sys
 import time
 import os
 
-# UART ayarları
+# UART ayarlari
 BAUD_RATE = 115200
 TIMEOUT = 2
 WRITE_TIMEOUT = 5
-MAX_PKT_SIZE = 64  # Nuvoton protokolü: SABİT 64 byte
+MAX_PKT_SIZE = 64
 
 # Nuvoton ISP Komutları (isp_user.h'den)
 CMD_UPDATE_APROM = 0x000000A0
