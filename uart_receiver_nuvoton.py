@@ -221,57 +221,69 @@ def send_connect(ser):
     """CMD_CONNECT gönderir ve yanıt alır"""
     print("CMD_CONNECT gönderiliyor...")
     
-    # Port durumunu kontrol et
-    print(f"  Port durumu: açık={ser.is_open}, yazılabilir={ser.writable()}")
-    print(f"  Output buffer: {ser.out_waiting} byte")
-    print(f"  Input buffer: {ser.in_waiting} byte")
-    
-    # Buffer temizle
+    # Buffer temizle (çok hızlı, timeout'u önlemek için)
     try:
         ser.reset_input_buffer()
         ser.reset_output_buffer()
-        time.sleep(0.2)  # Biraz daha uzun bekle
+        time.sleep(0.01)  # Çok kısa bekleme
     except Exception as e:
         print(f"  ⚠ Buffer temizleme hatası: {e}")
     
     # CMD_CONNECT paketi oluştur
     packet = create_packet(CMD_CONNECT)
-    print(f"  Paket hazır: {len(packet)} byte")
-    print(f"  Paket hex (ilk 16 byte): {packet[:16].hex()}")
     
-    # Gönder
+    # HEMEN gönder (reset sonrası 300ms içinde olmalı)
     if not send_packet(ser, packet):
         print("✗ CMD_CONNECT gönderilemedi")
         return False
     
     print(f"✓ CMD_CONNECT gönderildi")
     
-    # Kısa bekleme
-    time.sleep(0.1)
+    # Çok kısa bekleme (bootloader'ın işlemesi için)
+    time.sleep(0.05)
     
-    # Yanıt bekle (300ms timeout var, hızlı olmalı)
-    print("Yanıt bekleniyor (0.5 saniye)...")
-    response = receive_response(ser, timeout=0.5)
+    # Yanıt bekle (bootloader hızlı yanıt verir)
+    print("Yanıt bekleniyor (0.3 saniye)...")
+    response = receive_response(ser, timeout=0.3)
     
     if response:
+        # Yanıtın bootloader'dan mı yoksa application'dan mı geldiğini kontrol et
+        # Bootloader yanıtı: İlk 4 byte checksum+packet_no, sonra APROM size
+        # Application yanıtı: ASCII metin
+        
+        # İlk byte'ları kontrol et (bootloader binary, application ASCII)
+        first_bytes = response[:4]
+        is_ascii = all(32 <= b <= 126 for b in first_bytes[:4])  # Printable ASCII
+        
+        if is_ascii:
+            # Application'dan gelen yanıt
+            ascii_text = response[:64].decode('ascii', errors='ignore')
+            print(f"⚠ UYARI: Application yanıtı alındı (bootloader değil)!")
+            print(f"  Yanıt: {ascii_text[:50]}...")
+            print(f"  → Bootloader modunda değil, application çalışıyor")
+            print(f"  → Reset sonrası çok geç gönderilmiş olabilir (300ms içinde olmalı)")
+            return False
+        
+        # Bootloader yanıtı
         checksum = (response[1] << 8) | response[0]  # 16-bit little-endian
         packet_no = bytes_to_uint32(response, 4)
         aprom_size = bytes_to_uint32(response, 8)
         dataflash_addr = bytes_to_uint32(response, 12)
         
-        print(f"✓✓✓ YANIT ALINDI! ✓✓✓")
+        print(f"✓✓✓ BOOTLOADER YANITI ALINDI! ✓✓✓")
         print(f"  Checksum: 0x{checksum:04X}")
         print(f"  Paket No: {packet_no}")
         print(f"  APROM Boyutu: {aprom_size} byte (0x{aprom_size:08X})")
         print(f"  DataFlash Adresi: 0x{dataflash_addr:08X}")
-        print(f"  Tam Yanıt (ilk 32 byte): {response[:32].hex()}")
         return True
     else:
         print("✗ Yanıt alınamadı (timeout)")
         print(f"  Input buffer: {ser.in_waiting} byte")
         if ser.in_waiting > 0:
             partial = ser.read(ser.in_waiting)
-            print(f"  Kısmi yanıt: {partial.hex()}")
+            ascii_text = partial.decode('ascii', errors='ignore')
+            print(f"  Kısmi yanıt (ASCII): {ascii_text[:50]}")
+            print(f"  Kısmi yanıt (Hex): {partial.hex()[:50]}")
         return False
 
 def send_update_aprom(ser, bin_data):
@@ -405,15 +417,29 @@ def main():
     print()
     
     try:
-        print("⚠️  ÖNEMLİ: Kartı RESET yapın ve HEMEN bu scripti çalıştırın!")
-        print("⚠️  Bootloader sadece 300ms içinde CMD_CONNECT bekliyor!")
+        print("⚠️  ÖNEMLİ: Bootloader sadece 300ms içinde CMD_CONNECT bekliyor!")
+        print("⚠️  Reset sonrası HEMEN gönderilecek!")
         print()
-        input("Kartı resetledikten sonra ENTER'a basın...")
+        print("Kartı RESET yapın, script otomatik olarak CMD_CONNECT gönderecek...")
+        print("(3 saniye içinde reset yapın)")
         print()
+        
+        # 3 saniye geri sayım
+        for i in range(3, 0, -1):
+            print(f"  {i}...")
+            time.sleep(1.0)
+        
+        print("\n⚡ RESET BUTONUNA BASIN VE HEMEN BIRAKIN! ⚡")
+        print("⚡ CMD_CONNECT gönderiliyor... ⚡\n")
+        
+        # HEMEN CMD_CONNECT gönder (reset sonrası 300ms içinde)
+        time.sleep(0.05)  # Çok kısa bekleme (reset'in algılanması için)
         
         # CMD_CONNECT gönder
         if not send_connect(ser):
             print("\n✗ CMD_CONNECT başarısız, güncelleme yapılamaz")
+            print("  → Reset sonrası çok geç gönderilmiş olabilir")
+            print("  → Tekrar deneyin, reset sonrası HEMEN gönderilmeli")
             return
         
         time.sleep(0.1)
