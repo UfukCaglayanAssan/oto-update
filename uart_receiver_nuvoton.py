@@ -34,7 +34,6 @@ CMD_UPDATE_DATAFLASH = 0x000000C3
 CMD_RESEND_PACKET = 0x000000FF
 
 def find_serial_ports():
-    """Mevcut serial portları listeler"""
     ports = serial.tools.list_ports.comports()
     print("Mevcut Serial Portlar:")
     for port in ports:
