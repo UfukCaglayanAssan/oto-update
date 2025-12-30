@@ -115,20 +115,72 @@ def send_packet(ser, packet):
         return False
     
     try:
-        # Buffer temizle
-        ser.reset_output_buffer()
-        
-        # Paketi gönder
-        bytes_written = ser.write(packet)
-        ser.flush()
-        
-        if bytes_written != MAX_PKT_SIZE:
-            print(f"⚠ Uyarı: {bytes_written}/{MAX_PKT_SIZE} byte yazıldı")
+        # Port yazılabilir mi kontrol et
+        if not ser.writable():
+            print(f"✗ Port yazılabilir değil!")
             return False
         
+        # Output buffer kontrolü
+        if ser.out_waiting > 100:
+            print(f"⚠ Output buffer dolu ({ser.out_waiting} byte), temizleniyor...")
+            ser.reset_output_buffer()
+            time.sleep(0.1)
+        
+        # Buffer temizle
+        ser.reset_output_buffer()
+        time.sleep(0.05)
+        
+        # Paketi küçük parçalara bölerek gönder (timeout'u önlemek için)
+        chunk_size = 16  # 16 byte'lık parçalar
+        total_written = 0
+        
+        for i in range(0, len(packet), chunk_size):
+            chunk = packet[i:i+chunk_size]
+            try:
+                bytes_written = ser.write(chunk)
+                total_written += bytes_written
+                ser.flush()  # Her chunk'tan sonra flush
+                time.sleep(0.001)  # Kısa bekleme
+            except serial.SerialTimeoutException:
+                print(f"⚠ Chunk {i//chunk_size + 1} timeout, devam ediliyor...")
+                # Timeout olsa bile devam et
+                total_written += len(chunk)
+        
+        if total_written != MAX_PKT_SIZE:
+            print(f"⚠ Uyarı: {total_written}/{MAX_PKT_SIZE} byte yazıldı")
+            # Yine de devam et
+        
+        # Flush işlemi (timeout ile)
+        start_time = time.time()
+        while ser.out_waiting > 0:
+            if time.time() - start_time > 1.0:  # 1 saniye timeout
+                print(f"⚠ Flush timeout, kalan: {ser.out_waiting} byte")
+                break
+            time.sleep(0.01)
+        
+        ser.flush()
+        
         return True
+        
+    except serial.SerialTimeoutException as e:
+        print(f"⚠ Write timeout: {e}")
+        print(f"  → Port yeniden açılıyor...")
+        # Port'u yeniden açmayı dene
+        try:
+            ser.close()
+            time.sleep(0.5)
+            ser.open()
+            time.sleep(0.3)
+            print(f"  ✓ Port yeniden açıldı")
+            # Tekrar dene
+            return send_packet(ser, packet)
+        except Exception as e2:
+            print(f"  ✗ Port yeniden açılamadı: {e2}")
+            return False
     except Exception as e:
         print(f"✗ Paket gönderme hatası: {e}")
+        import traceback
+        traceback.print_exc()
         return False
 
 def receive_response(ser, timeout=1.0):
@@ -152,23 +204,36 @@ def send_connect(ser):
     """CMD_CONNECT gönderir ve yanıt alır"""
     print("CMD_CONNECT gönderiliyor...")
     
+    # Port durumunu kontrol et
+    print(f"  Port durumu: açık={ser.is_open}, yazılabilir={ser.writable()}")
+    print(f"  Output buffer: {ser.out_waiting} byte")
+    print(f"  Input buffer: {ser.in_waiting} byte")
+    
     # Buffer temizle
-    ser.reset_input_buffer()
-    ser.reset_output_buffer()
-    time.sleep(0.1)
+    try:
+        ser.reset_input_buffer()
+        ser.reset_output_buffer()
+        time.sleep(0.2)  # Biraz daha uzun bekle
+    except Exception as e:
+        print(f"  ⚠ Buffer temizleme hatası: {e}")
     
     # CMD_CONNECT paketi oluştur
     packet = create_packet(CMD_CONNECT)
+    print(f"  Paket hazır: {len(packet)} byte")
+    print(f"  Paket hex (ilk 16 byte): {packet[:16].hex()}")
     
     # Gönder
     if not send_packet(ser, packet):
         print("✗ CMD_CONNECT gönderilemedi")
         return False
     
-    print(f"✓ CMD_CONNECT gönderildi: {packet.hex()}")
+    print(f"✓ CMD_CONNECT gönderildi")
+    
+    # Kısa bekleme
+    time.sleep(0.1)
     
     # Yanıt bekle (300ms timeout var, hızlı olmalı)
-    print("Yanıt bekleniyor...")
+    print("Yanıt bekleniyor (0.5 saniye)...")
     response = receive_response(ser, timeout=0.5)
     
     if response:
@@ -182,10 +247,14 @@ def send_connect(ser):
         print(f"  Paket No: {packet_no}")
         print(f"  APROM Boyutu: {aprom_size} byte (0x{aprom_size:08X})")
         print(f"  DataFlash Adresi: 0x{dataflash_addr:08X}")
-        print(f"  Tam Yanıt: {response.hex()}")
+        print(f"  Tam Yanıt (ilk 32 byte): {response[:32].hex()}")
         return True
     else:
         print("✗ Yanıt alınamadı (timeout)")
+        print(f"  Input buffer: {ser.in_waiting} byte")
+        if ser.in_waiting > 0:
+            partial = ser.read(ser.in_waiting)
+            print(f"  Kısmi yanıt: {partial.hex()}")
         return False
 
 def send_update_aprom(ser, bin_data):
@@ -298,13 +367,24 @@ def main():
     # Serial port'u aç
     ser = open_serial_port(port_name, BAUD_RATE)
     
-    # Port'u temizle
-    ser.reset_input_buffer()
-    ser.reset_output_buffer()
-    time.sleep(0.2)
-    
+    # Port durumunu kontrol et
     print(f"Baud Rate: {ser.baudrate}")
     print(f"Port açık: {ser.is_open}")
+    print(f"Port yazılabilir: {ser.writable()}")
+    print(f"Port okunabilir: {ser.readable()}")
+    print()
+    
+    # Port'u temizle
+    try:
+        print("Port buffer'ları temizleniyor...")
+        ser.reset_input_buffer()
+        ser.reset_output_buffer()
+        time.sleep(0.3)  # Biraz daha uzun bekle
+        print(f"  Output buffer: {ser.out_waiting} byte")
+        print(f"  Input buffer: {ser.in_waiting} byte")
+    except Exception as e:
+        print(f"  ⚠ Buffer temizleme hatası: {e}")
+    
     print()
     
     try:
