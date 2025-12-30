@@ -501,19 +501,27 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
         packet_no = bytes_to_uint32(response, 4)
         print(f"[OK] Yanit alindi, Paket No: {packet_no}")
         # NOT: Bootloader paket numarasini her yanitta 2 artiriyor
-        # CMD_ERASE_ALL sonrasi: 6 (veya 393216 = 0x00060000 - byte siralama sorunu olabilir)
+        # CMD_ERASE_ALL sonrasi: 6
         # Ilk CMD_UPDATE_APROM sonrasi: 8 (beklenen)
-        # Eger paket numarasi cok buyukse (131072 = 0x00020000), byte siralama sorunu var
+        # Ilk yanit paket numarasini kullanarak devam paketleri icin beklenen degeri hesapla
+        first_response_packet_no = packet_no
+        # Eger paket numarasi cok buyukse, normalize et
+        if first_response_packet_no > 1000:
+            normalized = response[4] | (response[5] << 8)
+            if normalized > 0 and normalized < 1000:
+                first_response_packet_no = normalized
+                print(f"  [!] Ilk paket numarasi normalize edildi: {packet_no} -> {normalized}")
+        # Sonraki paket icin beklenen deger: ilk yanit + 2
+        expected_packet_no = first_response_packet_no + 2
+    else:
+        print(f"[!] Ilk paket yaniti alinamadi (devam ediliyor)")
+        # Ilk yanit alinamadi, varsayilan deger kullan
+        expected_packet_no = 10  # CMD_ERASE_ALL=6, ilk UPDATE=8, ilk devam=10
+        first_response_packet_no = None
 
     # Devam paketleri (56 byte veri her pakette)
     data_offset = 48  # Ilk pakette 48 byte gonderildi
     packet_num = 2
-
-    # NOT: ISP_UART kodunda paket numarasi her yanitta 2 artiriliyor (++u32PackNo; u32PackNo++;)
-    # Paket numarasi takibi: Bootloader'in gercek paket numarasini kullan
-    # Ilk yaniti al ve gercek paket numarasini ogren
-    first_response_packet_no = None
-    expected_packet_no = None  # Ilk yaniti alinca belirlenecek
 
     while data_offset < total_size:
         # 56 byte veri al
@@ -535,39 +543,16 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
             resp_packet_no = bytes_to_uint32(response, 4)
             checksum_resp = (response[1] << 8) | response[0]
 
-            # Ilk yaniti kaydet (gercek paket numarasini ogrenmek icin)
-            if first_response_packet_no is None:
-                first_response_packet_no = resp_packet_no
-                # Eger paket numarasi cok buyukse (byte siralama sorunu), normalize et
-                if resp_packet_no > 1000:
-                    # Byte siralama sorunu var, gercek degeri hesapla
-                    # 131072 = 0x00020000 -> byte 4-5'te 2 var (little-endian: byte[4]=2, byte[5]=0)
-                    # 393216 = 0x00060000 -> byte 4-5'te 6 var (little-endian: byte[4]=6, byte[5]=0)
-                    # 524288 = 0x00080000 -> byte 4-5'te 8 var (little-endian: byte[4]=8, byte[5]=0)
-                    # Byte 4-5'i oku (16-bit little-endian)
-                    normalized = response[4] | (response[5] << 8)
-                    if normalized > 0 and normalized < 1000:
-                        print(f"  [!] Paket numarasi normalize edildi: {resp_packet_no} -> {normalized}")
-                        resp_packet_no = normalized
-                        first_response_packet_no = resp_packet_no
-                        expected_packet_no = resp_packet_no + 2  # Sonraki paket icin
-                    else:
-                        # Normalizasyon basarisiz, paket numarasi takibini yapma
-                        expected_packet_no = None
-                        print(f"  [!] Paket numarasi cok buyuk ({resp_packet_no}), takip yapilmayacak")
-                else:
-                    # Normal paket numarasi
-                    expected_packet_no = resp_packet_no + 2  # Sonraki paket icin
-
-            # Paket numarasi kontrolu (sadece expected_packet_no varsa)
-            if expected_packet_no is not None:
-                # Eger paket numarasi hala cok buyukse, normalize et
-                if resp_packet_no > 1000:
-                    normalized = response[4] | (response[5] << 8)
-                    if normalized > 0 and normalized < 1000:
-                        resp_packet_no = normalized
+            # Eger paket numarasi cok buyukse, normalize et
+            if resp_packet_no > 1000:
+                normalized = response[4] | (response[5] << 8)
+                if normalized > 0 and normalized < 1000:
+                    resp_packet_no = normalized
+                    if first_response_packet_no is None or first_response_packet_no > 1000:
                         print(f"  [!] Paket numarasi normalize edildi: {resp_packet_no}")
-                
+
+            # Paket numarasi kontrolu
+            if expected_packet_no is not None:
                 if resp_packet_no == expected_packet_no:
                     print(f"  [OK] Yanit: Paket No {resp_packet_no} (Checksum: 0x{checksum_resp:04X})")
                 else:
@@ -575,7 +560,7 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
                     diff = resp_packet_no - expected_packet_no
                     if abs(diff) <= 4:
                         print(f"  [!] Yanit: Paket No {resp_packet_no} (Beklenen: {expected_packet_no}, Fark: {diff:+d})")
-                        # Bootloader'in gercek paket numarasini kullan
+                        # Bootloader'in gercek paket numarasini kullan ve takibi buna gore ayarla
                         expected_packet_no = resp_packet_no
                     else:
                         print(f"  [!] Yanit: Paket No {resp_packet_no} (Beklenen: {expected_packet_no}, Checksum: 0x{checksum_resp:04X})")
@@ -585,6 +570,9 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
             else:
                 # Paket numarasi takibi yapilmiyor, sadece goster
                 print(f"  [OK] Yanit: Paket No {resp_packet_no} (Checksum: 0x{checksum_resp:04X})")
+        else:
+            # Yanit alinamadi (timeout)
+            print(f"  [!] Yanit alinamadi (timeout)")
 
         data_offset += chunk_len
         packet_num += 1
