@@ -155,7 +155,7 @@ def run_app(ser):
 
 def main():
 
-    port = sys.argv[1]
+    port = "/dev/ttyACM0"
     fw = "NuvotonM26x-Bootloader-Test.bin"
 
     with open(fw, "rb") as f:
