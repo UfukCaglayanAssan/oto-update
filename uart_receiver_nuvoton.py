@@ -649,9 +649,18 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
 
         if ser.in_waiting > 0:
             response = ser.read(ser.in_waiting)
-            print(f"[OK] Reset sonrasi mesaj alindi: {response[:50].decode('ascii', errors='ignore')}")
+            try:
+                ascii_msg = response.decode('ascii', errors='ignore')
+                print(f"[OK] Reset sonrasi mesaj alindi:")
+                print(f"  Mesaj: {ascii_msg}")
+                print(f"  Hex: {response.hex()[:100]}")
+            except:
+                print(f"[OK] Reset sonrasi mesaj alindi (binary):")
+                print(f"  Hex: {response.hex()[:100]}")
         else:
             print(f"  Reset sonrasi mesaj gelmedi (normal olabilir)")
+            print(f"  → Yeni firmware UART mesaji gondermiyor olabilir")
+            print(f"  → LED yanip sonuyor mu kontrol edin")
     else:
         print(f"  CMD_RUN_APROM gonderilemedi (manuel reset gerekebilir)")
         print(f"  → Karti manuel olarak reset yapin")
