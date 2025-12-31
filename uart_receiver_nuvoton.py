@@ -171,49 +171,72 @@ def calculate_checksum(data):
         checksum += byte
     return checksum & 0xFFFF  # 16-bit
 
+def pkt_update_first(addr, size, data, packno):
+    """İlk CMD_UPDATE_APROM paketi (Kullanıcı önerisi - packno ile)
+    
+    NOT: ISP_UART kodunda Byte 4-7 atlanıyor (pu8Src += 8)
+    Ama bazı bootloader versiyonları packno'yu okuyor olabilir
+    
+    Format:
+    - Byte 0-3: CMD_UPDATE_APROM
+    - Byte 4-7: packno (bazı bootloader'lar için)
+    - Byte 8-11: addr
+    - Byte 12-15: size
+    - Byte 16-63: data (48 byte)
+    """
+    p = bytearray(64)
+    p[0:4] = uint32_to_bytes(CMD_UPDATE_APROM)
+    p[4:8] = uint32_to_bytes(packno)  # Kullanıcı önerisi
+    p[8:12] = uint32_to_bytes(addr)
+    p[12:16] = uint32_to_bytes(size)
+    if data:
+        data_len = min(len(data), 48)
+        p[16:16+data_len] = data[:data_len]
+    return p
+
+def pkt_update_next(data, packno):
+    """Devam CMD_UPDATE_APROM paketleri (Kullanıcı önerisi - packno ile)
+    
+    NOT: ISP_UART kodunda Byte 4-7 atlanıyor (pu8Src += 8)
+    Ama bazı bootloader versiyonları packno'yu okuyor olabilir
+    
+    Format:
+    - Byte 0-3: CMD_UPDATE_APROM
+    - Byte 4-7: packno (bazı bootloader'lar için)
+    - Byte 8-63: data (56 byte)
+    """
+    p = bytearray(64)
+    p[0:4] = uint32_to_bytes(CMD_UPDATE_APROM)
+    p[4:8] = uint32_to_bytes(packno)  # Kullanıcı önerisi
+    if data:
+        data_len = min(len(data), 56)
+        p[8:8+data_len] = data[:data_len]
+    return p
+
 def create_packet(cmd, param1=0, param2=0, data=None, is_first_packet=False):
     """
-    64 byte Nuvoton paketi olusturur
-
-    ISP_UART protokolune gore:
-    - Byte 0-3: CMD
-    - Byte 4-7: Padding (pu8Src += 8 ile atlanir)
-    - Byte 8+: Data veya parametreler
+    64 byte Nuvoton paketi olusturur (geriye uyumluluk icin)
     
-    NOT: Paket numarasi payload'a YAZILMAZ! Bootloader kendi sayar.
+    YENI: pkt_update_first() ve pkt_update_next() kullanin!
     """
     packet = bytearray(MAX_PKT_SIZE)
-
-    # Byte 0-3: Komut (uint32_t, little-endian)
     packet[0:4] = uint32_to_bytes(cmd)
 
     # CMD_SYNC_PACKNO icin ozel format: Byte 8-11'de paket numarasi
     if cmd == CMD_SYNC_PACKNO:
-        packet[8:12] = uint32_to_bytes(param1)  # Paket numarasi
+        packet[8:12] = uint32_to_bytes(param1)
         return packet
 
     # Ilk paket icin ozel format (CMD_UPDATE_APROM):
-    # ISP_UART kodunda: pu8Src += 8 yapiliyor, sonra:
-    # Byte 8-11: Address (inpw(pu8Src))
-    # Byte 12-15: TotalLen (inpw(pu8Src + 4))
-    # Byte 16-63: Data (48 byte)
     if is_first_packet and param2 != 0:
-        # Byte 8-11: Address
         packet[8:12] = uint32_to_bytes(param1)
-        # Byte 12-15: TotalLen
         packet[12:16] = uint32_to_bytes(param2)
-        # Byte 16-63: Veri (48 byte)
         if data:
-            data_len = min(len(data), 48)  # Ilk pakette maksimum 48 byte veri
+            data_len = min(len(data), 48)
             packet[16:16+data_len] = data[:data_len]
     else:
-        # Devam paketleri icin:
-        # Byte 0-3: CMD
-        # Byte 4-7: Ignore edilir (bootloader kullanmiyor)
-        # Byte 8-63: Veri (56 byte) - pu8Src += 8 yapildiktan sonra byte 8'den basliyor
-        # NOT: Paket numarasi payload'a YAZILMAZ!
         if data:
-            data_len = min(len(data), 56)  # Devam paketlerinde maksimum 56 byte veri
+            data_len = min(len(data), 56)
             packet[8:8+data_len] = data[:data_len]
 
     return packet
@@ -546,7 +569,8 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
     # Ilk paket: CMD_UPDATE_APROM + adres + boyut
     print(f"\n[1/3] CMD_UPDATE_APROM (baslangic) gonderiliyor...")
     first_data = bin_data[:48] if len(bin_data) >= 48 else bin_data  # Ilk 48 byte (byte 16-63)
-    first_packet = create_packet(CMD_UPDATE_APROM, start_address, total_size, first_data, is_first_packet=True)
+    packno = 1
+    first_packet = pkt_update_first(start_address, total_size, first_data, packno)
 
     if not send_packet(ser, first_packet):
         print("[X] Ilk paket gonderilemedi")
@@ -585,16 +609,15 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
 
     # Devam paketleri (56 byte veri her pakette)
     data_offset = 48  # Ilk pakette 48 byte gonderildi
-    packet_num = 2  # Sadece gösterim için (paket numarası payload'a YAZILMAZ!)
+    packet_num = 2  # Paket numarasi (payload'a yaziliyor)
 
     while data_offset < total_size:
         # 56 byte veri al
         chunk_data = bin_data[data_offset:data_offset+56]
         chunk_len = len(chunk_data)
 
-        # Paketi 64 byte'a tamamla
-        # NOT: packet_num parametresi YOK! Bootloader kendi sayar.
-        packet = create_packet(CMD_UPDATE_APROM, 0, 0, chunk_data)
+        # Paketi 64 byte'a tamamla (packno ile)
+        packet = pkt_update_next(chunk_data, packet_num)
 
         print(f"[{packet_num}] Paket gonderiliyor... ({chunk_len} byte veri, offset: {data_offset})")
 
