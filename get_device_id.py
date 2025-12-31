@@ -101,27 +101,82 @@ def open_serial_port(port_name=None):
     return None, None
 
 def get_device_id(ser):
-    """Cihaz ID'sini alir"""
+    """Cihaz ID'sini alir - otomatik bootloader yakalama ile"""
     print("\n" + "="*60)
     print("Cihaz ID'si Aliniyor...")
     print("="*60)
+    print("\nONEMLI: Bootloader sadece reset sonrasi 300ms icinde aktif!")
+    print("Script surekli CMD_CONNECT gonderecek, reset yapinca yakalayacak...")
+    print("\nKarti RESET yapin (istediginiz zaman)")
+    print("Script otomatik olarak bootloader'i yakalayacak...")
+    print("Cikmak icin Ctrl+C tuslarina basin\n")
     
-    # 1. CMD_CONNECT gonder
-    print("\n[1/2] CMD_CONNECT gonderiliyor...")
+    # 1. Surekli CMD_CONNECT gonder (bootloader yakalama)
     connect_packet = create_packet(CMD_CONNECT)
+    max_attempts = 5000
+    attempt = 0
+    connected = False
     
-    if not send_packet(ser, connect_packet):
-        print("[X] CMD_CONNECT gonderilemedi")
+    print("[>] Surekli CMD_CONNECT gonderiliyor...")
+    print("   (Reset yapinca bootloader yakalanacak)\n")
+    
+    while attempt < max_attempts and not connected:
+        attempt += 1
+        
+        # Her 100 denemede bir bilgi ver
+        if attempt % 100 == 0:
+            print(f"  Deneme: {attempt}... (Reset yapin)")
+        
+        # Buffer temizle
+        try:
+            ser.reset_input_buffer()
+            ser.reset_output_buffer()
+        except:
+            pass
+        
+        # CMD_CONNECT gonder
+        if send_packet(ser, connect_packet):
+            # Kisa bekleme (bootloader'in yanit vermesi icin)
+            time.sleep(0.005)  # 5ms
+            
+            # Yanit var mi kontrol et
+            if ser.in_waiting >= 4:
+                # En az 4 byte var, yanit gelmis olabilir
+                time.sleep(0.05)  # Biraz daha bekle
+                
+                if ser.in_waiting >= 64:
+                    # Tam yanit gelmis
+                    connect_response = receive_response(ser)
+                    
+                    if connect_response and len(connect_response) >= 64:
+                        # Yanitin bootloader'dan mi geldigini kontrol et
+                        cmd_value = bytes_to_uint32(connect_response, 0)
+                        
+                        # Bootloader yaniti: Byte 0-3'te checksum var (genellikle 0x00AE veya benzeri)
+                        # Application yaniti: ASCII metin
+                        first_bytes = connect_response[:4]
+                        is_ascii = all(32 <= b <= 126 for b in first_bytes[:4])
+                        
+                        if not is_ascii:
+                            # Bootloader yaniti!
+                            checksum = (connect_response[1] << 8) | connect_response[0]
+                            packet_no = connect_response[4] | (connect_response[5] << 8)
+                            
+                            print(f"\n[OK][OK][OK] BOOTLOADER YAKALANDI! [OK][OK][OK]")
+                            print(f"  Checksum: 0x{checksum:04X}")
+                            print(f"  Paket No: {packet_no}")
+                            connected = True
+                            break
+        
+        # Cok kisa bekleme (hizli polling)
+        time.sleep(0.005)  # 5ms
+    
+    if not connected:
+        print(f"\n[X] Bootloader yakalanamadi ({max_attempts} deneme)")
+        print("    - Karti reset yaptiniz mi?")
+        print("    - Bootloader modunda mi?")
+        print("    - Port dogru mu?")
         return None
-    
-    time.sleep(0.1)
-    connect_response = receive_response(ser)
-    
-    if not connect_response:
-        print("[X] CMD_CONNECT yaniti alinamadi")
-        return None
-    
-    print("[OK] CMD_CONNECT yaniti alindi")
     
     # 2. CMD_GET_DEVICEID gonder
     print("\n[2/2] CMD_GET_DEVICEID gonderiliyor...")
@@ -184,12 +239,8 @@ def main():
         
         print(f"\nPort: {port}")
         print(f"Baud Rate: 115200")
-        print(f"\nONEMLI: Karti RESET yapin ve scripti calistirin!")
-        print(f"Bootloader sadece reset sonrasi 300ms icinde aktif!")
-        print(f"\n3 saniye sonra basliyor...")
-        time.sleep(3)
         
-        # Cihaz ID'sini al
+        # Cihaz ID'sini al (otomatik bootloader yakalama ile)
         device_id = get_device_id(ser)
         
         if device_id:
