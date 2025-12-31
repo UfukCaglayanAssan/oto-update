@@ -397,39 +397,24 @@ def send_connect(ser):
 
         # Bootloader yaniti
         checksum = (response[1] << 8) | response[0]  # 16-bit little-endian
-        packet_no = bytes_to_uint32(response, 4)
         
         # DEBUG: Tam yaniti goster (parse etmeden once)
         print(f"  [DEBUG] Tam Yanit (ilk 16 byte): {response[:16].hex()}")
-        print(f"  [DEBUG] Byte 4-7 (Paket No): {response[4:8].hex()} -> {packet_no}")
         
-        # Paket numarasi normalizasyonu (512 = 0x00000200 -> byte 5'te 2 var)
-        if packet_no > 0 and packet_no < 1000:
-            # Normal deger, oldugu gibi kullan
-            pass
-        elif packet_no > 1000:
-            # Buyuk deger, normalize et
-            # 512 = 0x00000200 -> byte 5 = 2
-            # 1536 = 0x00000600 -> byte 5 = 6
-            normalized = response[4] | (response[5] << 8)
-            if normalized > 0 and normalized < 1000:
-                print(f"  [DEBUG] Paket numarasi normalize edildi: {packet_no} -> {normalized}")
-                packet_no = normalized
-            else:
-                # Byte 6-7'den dene
-                normalized2 = response[6] | (response[7] << 8)
-                if normalized2 > 0 and normalized2 < 1000:
-                    print(f"  [DEBUG] Paket numarasi normalize edildi (byte 6-7): {packet_no} -> {normalized2}")
-                    packet_no = normalized2
-        elif packet_no == 0:
-            # 0 degeri anormal, byte 4-5'i kontrol et
-            normalized = response[4] | (response[5] << 8)
-            if normalized > 0 and normalized < 1000:
-                print(f"  [DEBUG] Paket numarasi 0'dan normalize edildi: {normalized}")
-                packet_no = normalized
+        # Paket numarasi: Byte 4-5'i oku (16-bit little-endian)
+        # ISP_UART: outpw(pu8Response + 4, u32PackNo) -> Byte 4-7'ye yaziyor
+        # Ama byte 4-5'te gercek deger var (little-endian)
+        packet_no_raw = bytes_to_uint32(response, 4)
+        packet_no = response[4] | (response[5] << 8)  # 16-bit little-endian
+        print(f"  [DEBUG] Byte 4-7 (Paket No): {response[4:8].hex()} -> Raw: {packet_no_raw}, Normalized: {packet_no}")
         
+        # APROM boyutu: Byte 8-11'i oku (32-bit little-endian)
         aprom_size = bytes_to_uint32(response, 8)
+        print(f"  [DEBUG] Byte 8-11 (APROM Size): {response[8:12].hex()} -> {aprom_size} (0x{aprom_size:08X})")
+        
+        # DataFlash adresi: Byte 12-15'i oku (32-bit little-endian)
         dataflash_addr = bytes_to_uint32(response, 12)
+        print(f"  [DEBUG] Byte 12-15 (DataFlash): {response[12:16].hex()} -> 0x{dataflash_addr:08X}")
 
         # Config verileri (Byte 16-31) - ReadData ile doldurulmus olabilir
         config_data = response[16:32] if len(response) >= 32 else None
@@ -525,22 +510,13 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
                 print(f"  Input buffer: {ser.in_waiting} byte bekliyor")
             erase_response = receive_response(ser, timeout=2.0)  # Timeout artirildi
             if erase_response:
-                erase_packet_no = bytes_to_uint32(erase_response, 4)
                 # DEBUG
                 print(f"  [DEBUG] CMD_ERASE_ALL yaniti (ilk 16 byte): {erase_response[:16].hex()}")
-                print(f"  [DEBUG] Byte 4-7 (Paket No): {erase_response[4:8].hex()} -> {erase_packet_no}")
                 
-                # Normalizasyon
-                if erase_packet_no == 0:
-                    normalized = erase_response[4] | (erase_response[5] << 8)
-                    if normalized > 0 and normalized < 1000:
-                        erase_packet_no = normalized
-                        print(f"  [DEBUG] Paket numarasi 0'dan normalize edildi: {normalized}")
-                elif erase_packet_no > 1000:
-                    normalized = erase_response[4] | (erase_response[5] << 8)
-                    if normalized > 0 and normalized < 1000:
-                        erase_packet_no = normalized
-                        print(f"  [DEBUG] Paket numarasi normalize edildi: {erase_packet_no} -> {normalized}")
+                # Paket numarasi: Byte 4-5'i oku (16-bit little-endian)
+                erase_packet_no_raw = bytes_to_uint32(erase_response, 4)
+                erase_packet_no = erase_response[4] | (erase_response[5] << 8)  # 16-bit little-endian
+                print(f"  [DEBUG] Byte 4-7 (Paket No): {erase_response[4:8].hex()} -> Raw: {erase_packet_no_raw}, Normalized: {erase_packet_no}")
                 
                 print(f"[OK] Silme tamamlandi, Paket No: {erase_packet_no}")
             else:
@@ -562,28 +538,18 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
 
     print(f"[OK] Ilk paket gonderildi ({len(first_data)} byte veri)")
 
-    # Yanit bekle (daha uzun timeout)
-    response = receive_response(ser, timeout=2.0)
+    # Yanit bekle (daha uzun timeout - flash yazma zaman alir)
+    # Ilk paket sonrasi flash yazma yapiliyor, bu zaman alabilir
+    time.sleep(0.5)  # Flash yazma icin ekstra bekleme
+    response = receive_response(ser, timeout=3.0)  # Timeout artirildi
     if response:
-        packet_no = bytes_to_uint32(response, 4)
         # DEBUG
         print(f"  [DEBUG] Ilk CMD_UPDATE_APROM yaniti (ilk 16 byte): {response[:16].hex()}")
-        print(f"  [DEBUG] Byte 4-7 (Paket No): {response[4:8].hex()} -> {packet_no}")
         
-        # Normalizasyon
-        if packet_no == 0:
-            normalized = response[4] | (response[5] << 8)
-            if normalized > 0 and normalized < 1000:
-                packet_no = normalized
-                print(f"  [DEBUG] Paket numarasi 0'dan normalize edildi: {normalized}")
-        elif packet_no > 0 and packet_no < 1000:
-            # Normal deger
-            pass
-        elif packet_no > 1000:
-            normalized = response[4] | (response[5] << 8)
-            if normalized > 0 and normalized < 1000:
-                packet_no = normalized
-                print(f"  [DEBUG] Paket numarasi normalize edildi: {packet_no} -> {normalized}")
+        # Paket numarasi: Byte 4-5'i oku (16-bit little-endian)
+        packet_no_raw = bytes_to_uint32(response, 4)
+        packet_no = response[4] | (response[5] << 8)  # 16-bit little-endian
+        print(f"  [DEBUG] Byte 4-7 (Paket No): {response[4:8].hex()} -> Raw: {packet_no_raw}, Normalized: {packet_no}")
         
         print(f"[OK] Yanit alindi, Paket No: {packet_no}")
         # NOT: Bootloader paket numarasini her yanitta 2 artiriyor
@@ -619,34 +585,12 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
             return False
 
         # Yanit bekle (daha uzun timeout - flash yazma zaman alir)
-        response = receive_response(ser, timeout=2.0)
+        response = receive_response(ser, timeout=3.0)  # Timeout artirildi
         if response:
-            resp_packet_no = bytes_to_uint32(response, 4)
+            # Paket numarasi: Byte 4-5'i oku (16-bit little-endian)
+            resp_packet_no_raw = bytes_to_uint32(response, 4)
+            resp_packet_no = response[4] | (response[5] << 8)  # 16-bit little-endian
             checksum_resp = (response[1] << 8) | response[0]
-
-            # Normalizasyon (0, 512, 1536 gibi anormal degerler icin)
-            if resp_packet_no == 0:
-                # 0 degeri anormal, byte 4-5'i kontrol et
-                normalized = response[4] | (response[5] << 8)
-                if normalized > 0 and normalized < 1000:
-                    resp_packet_no = normalized
-                    print(f"  [DEBUG] Paket numarasi 0'dan normalize edildi: {normalized}")
-            elif resp_packet_no > 0 and resp_packet_no < 1000:
-                # Normal deger
-                pass
-            elif resp_packet_no > 1000:
-                # Buyuk deger, normalize et
-                normalized = response[4] | (response[5] << 8)
-                if normalized > 0 and normalized < 1000:
-                    resp_packet_no = normalized
-                    if first_response_packet_no is None or first_response_packet_no > 1000:
-                        print(f"  [DEBUG] Paket numarasi normalize edildi: {resp_packet_no}")
-                else:
-                    # Byte 6-7'den dene
-                    normalized2 = response[6] | (response[7] << 8)
-                    if normalized2 > 0 and normalized2 < 1000:
-                        resp_packet_no = normalized2
-                        print(f"  [DEBUG] Paket numarasi normalize edildi (byte 6-7): {resp_packet_no}")
 
             # Paket numarasi kontrolu
             if expected_packet_no is not None:
