@@ -311,17 +311,33 @@ def receive_response(ser, timeout=1.0):
     """64 byte yanit paketi alir"""
     start_time = time.time()
     response = bytearray()
+    
+    # DEBUG: Baslangic durumu
+    initial_waiting = ser.in_waiting
+    if initial_waiting > 0:
+        print(f"  [DEBUG] receive_response: Baslangicta {initial_waiting} byte bekliyor")
 
     while len(response) < MAX_PKT_SIZE:
         if time.time() - start_time > timeout:
+            # DEBUG: Timeout durumu
+            print(f"  [DEBUG] receive_response: Timeout! Alinan: {len(response)}/{MAX_PKT_SIZE} byte")
+            if len(response) > 0:
+                print(f"  [DEBUG] Kismi yanit: {response.hex()[:64]}")
             return None
 
         if ser.in_waiting > 0:
             data = ser.read(min(ser.in_waiting, MAX_PKT_SIZE - len(response)))
             response.extend(data)
+            # DEBUG: Her okuma sonrasi
+            if len(response) > 0 and len(response) % 16 == 0:
+                print(f"  [DEBUG] receive_response: {len(response)}/{MAX_PKT_SIZE} byte alindi")
 
         time.sleep(0.01)
-
+    
+    # DEBUG: Tam yanit alindi
+    if len(response) == MAX_PKT_SIZE:
+        print(f"  [DEBUG] receive_response: Tam yanit alindi: {response[:16].hex()}")
+    
     return bytes(response)
 
 def send_connect(ser):
@@ -337,7 +353,15 @@ def send_connect(ser):
         print(f"    Buffer temizleme hatasi: {e}")
 
     # CMD_CONNECT paketi olustur
+    # ISP_UART: CMD_CONNECT icin ozel format yok, sadece komut gonderilir
     packet = create_packet(CMD_CONNECT)
+    
+    # DEBUG: Paket formatini kontrol et
+    print(f"  [DEBUG] CMD_CONNECT paketi (ilk 16 byte): {packet[:16].hex()}")
+    cmd_value = bytes_to_uint32(packet, 0)
+    print(f"  [DEBUG] CMD degeri: 0x{cmd_value:08X} (beklenen: 0x{CMD_CONNECT:08X})")
+    if cmd_value != CMD_CONNECT:
+        print(f"  [HATA] CMD degeri yanlis!")
 
     # HEMEN gonder (reset sonrasi 300ms icinde olmali)
     if not send_packet(ser, packet):
