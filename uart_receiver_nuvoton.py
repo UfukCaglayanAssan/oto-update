@@ -61,6 +61,14 @@ def open_serial_port(port_name=None, baud_rate=BAUD_RATE):
                     try:
                         ser = serial.Serial(port, baud_rate, timeout=TIMEOUT, write_timeout=WRITE_TIMEOUT,
                                           rtscts=False, dsrdtr=False, xonxoff=False)
+                        
+                        # DTR ve RTS'yi LOW yap (bazı USB-UART çiplerinde reset tetikler)
+                        try:
+                            ser.setDTR(False)
+                            ser.setRTS(False)
+                        except:
+                            pass  # Bazı portlarda desteklenmeyebilir
+                        
                         print(f"Port acildi: {port}")
                         return ser
                     except (serial.SerialException, FileNotFoundError):
@@ -70,6 +78,14 @@ def open_serial_port(port_name=None, baud_rate=BAUD_RATE):
         # Belirtilen portu ac
         ser = serial.Serial(port_name, baud_rate, timeout=TIMEOUT, write_timeout=WRITE_TIMEOUT,
                           rtscts=False, dsrdtr=False, xonxoff=False)
+        
+        # DTR ve RTS'yi LOW yap (bazı USB-UART çiplerinde reset tetikler)
+        try:
+            ser.setDTR(False)
+            ser.setRTS(False)
+        except:
+            pass  # Bazı portlarda desteklenmeyebilir
+        
         print(f"Port acildi: {port_name}")
         return ser
 
@@ -163,6 +179,8 @@ def create_packet(cmd, param1=0, param2=0, data=None, is_first_packet=False):
     - Byte 0-3: CMD
     - Byte 4-7: Padding (pu8Src += 8 ile atlanir)
     - Byte 8+: Data veya parametreler
+    
+    NOT: Paket numarasi payload'a YAZILMAZ! Bootloader kendi sayar.
     """
     packet = bytearray(MAX_PKT_SIZE)
 
@@ -193,6 +211,7 @@ def create_packet(cmd, param1=0, param2=0, data=None, is_first_packet=False):
         # Byte 0-3: CMD
         # Byte 4-7: Ignore edilir (bootloader kullanmiyor)
         # Byte 8-63: Veri (56 byte) - pu8Src += 8 yapildiktan sonra byte 8'den basliyor
+        # NOT: Paket numarasi payload'a YAZILMAZ!
         if data:
             data_len = min(len(data), 56)  # Devam paketlerinde maksimum 56 byte veri
             packet[8:8+data_len] = data[:data_len]
@@ -307,35 +326,37 @@ def send_packet(ser, packet, retry=False):
         print(f"[X] Paket gonderme hatasi: {e}")
         return False
 
-def receive_response(ser, timeout=None):
-    """64 byte yanit paketi alir
+def receive_response(ser, timeout=5.0):
+    """64 byte yanit paketi alir (timeout ile)
     
-    ISP_UART: Her paket sonrasi mutlaka yanit gonderiliyor (PutString() her zaman cagriliyor)
-    WriteData() flash yazma islemi zaman aliyor (~140-280ms) ama yanit mutlaka geliyor
-    Timeout yok - yanit gelene kadar bekliyor
+    Args:
+        ser: Serial port nesnesi
+        timeout: Maksimum bekleme suresi (saniye). None ise varsayilan 5.0 saniye
+    
+    Returns:
+        bytes: 64 byte yanit paketi, veya None (timeout)
     """
-    response = bytearray()
+    if timeout is None:
+        timeout = 5.0
     
-    # DEBUG: Baslangic durumu
-    initial_waiting = ser.in_waiting
-    if initial_waiting > 0:
-        print(f"  [DEBUG] receive_response: Baslangicta {initial_waiting} byte bekliyor")
-
-    # ISP_UART: Yanit mutlaka geliyor, timeout yok - yanit gelene kadar bekliyor
+    response = bytearray()
+    start_time = time.time()
+    
     while len(response) < MAX_PKT_SIZE:
+        # Timeout kontrolu
+        if time.time() - start_time > timeout:
+            if len(response) > 0:
+                print(f"  [!] Timeout: Kismi yanit alindi ({len(response)}/{MAX_PKT_SIZE} byte)")
+            else:
+                print(f"  [!] Timeout: Yanit alinamadi")
+            return None
+        
         if ser.in_waiting > 0:
             data = ser.read(min(ser.in_waiting, MAX_PKT_SIZE - len(response)))
             response.extend(data)
-            # DEBUG: Her okuma sonrasi (sadece 16 byte katlarinda)
-            if len(response) > 0 and len(response) % 16 == 0:
-                print(f"  [DEBUG] receive_response: {len(response)}/{MAX_PKT_SIZE} byte alindi")
         else:
-            # Veri yok, kisa bekle (flash yazma devam ediyor olabilir)
+            # Veri yok, kisa bekle
             time.sleep(0.01)
-    
-    # DEBUG: Tam yanit alindi
-    if len(response) == MAX_PKT_SIZE:
-        print(f"  [DEBUG] receive_response: Tam yanit alindi: {response[:16].hex()}")
     
     return bytes(response)
 
@@ -374,7 +395,7 @@ def send_connect(ser):
 
     # Yanit bekle (bootloader hizli yanit verir)
     print("Yanit bekleniyor...")
-    response = receive_response(ser)  # Timeout yok - yanit gelene kadar bekliyor
+    response = receive_response(ser, timeout=5.0)  # 5 saniye timeout
 
     if response:
         # Yanitin bootloader'dan mi yoksa application'dan mi geldigini kontrol et
@@ -433,7 +454,7 @@ def send_connect(ser):
             # Input buffer'da veri var mi kontrol et
             if ser.in_waiting > 0:
                 print(f"  Input buffer: {ser.in_waiting} byte bekliyor")
-            sync_response = receive_response(ser)  # Timeout yok - yanit gelene kadar bekliyor
+            sync_response = receive_response(ser, timeout=2.0)  # 2 saniye timeout
             if sync_response:
                 sync_packet_no = bytes_to_uint32(sync_response, 4)
                 print(f"  [OK] Paket numarasi senkronize edildi: {sync_packet_no}")
@@ -453,7 +474,7 @@ def send_connect(ser):
             # Input buffer'da veri var mi kontrol et
             if ser.in_waiting > 0:
                 print(f"  Input buffer: {ser.in_waiting} byte bekliyor")
-            device_response = receive_response(ser)  # Timeout yok - yanit gelene kadar bekliyor
+            device_response = receive_response(ser, timeout=2.0)  # 2 saniye timeout
             if device_response and len(device_response) >= 64:
                 device_id = bytes_to_uint32(device_response, 8)
                 checksum_dev = (device_response[1] << 8) | device_response[0]
@@ -507,7 +528,7 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
             # Input buffer'da veri var mi kontrol et
             if ser.in_waiting > 0:
                 print(f"  Input buffer: {ser.in_waiting} byte bekliyor")
-            erase_response = receive_response(ser)  # Timeout yok - yanit gelene kadar bekliyor
+            erase_response = receive_response(ser, timeout=5.0)  # 5 saniye timeout (flash silme zaman alabilir)
             if erase_response:
                 # DEBUG
                 print(f"  [DEBUG] CMD_ERASE_ALL yaniti (ilk 16 byte): {erase_response[:16].hex()}")
@@ -537,11 +558,11 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
 
     print(f"[OK] Ilk paket gonderildi ({len(first_data)} byte veri)")
 
-    # Yanit bekle (timeout yok - yanit gelene kadar bekliyor)
+    # Yanit bekle (timeout ile - flash silme ve yazma zaman alabilir)
     # ISP_UART: Ilk paket sonrasi EraseAP() + WriteData() cagriliyor
     # EraseAP() ~500ms-2s, WriteData() ~140-280ms
-    # Toplam: ~640ms-2.3s - ama yanit mutlaka geliyor
-    response = receive_response(ser)  # Timeout yok - yanit gelene kadar bekliyor
+    # Toplam: ~640ms-2.3s - ama timeout ekliyoruz
+    response = receive_response(ser, timeout=5.0)  # 5 saniye timeout
     if response:
         # DEBUG
         print(f"  [DEBUG] Ilk CMD_UPDATE_APROM yaniti (ilk 16 byte): {response[:16].hex()}")
@@ -568,7 +589,7 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
 
     # Devam paketleri (56 byte veri her pakette)
     data_offset = 48  # Ilk pakette 48 byte gonderildi
-    packet_num = 2
+    packet_num = 2  # Sadece gösterim için (paket numarası payload'a YAZILMAZ!)
 
     while data_offset < total_size:
         # 56 byte veri al
@@ -576,7 +597,8 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
         chunk_len = len(chunk_data)
 
         # Paketi 64 byte'a tamamla
-        packet = create_packet(CMD_UPDATE_APROM, packet_num, 0, chunk_data)
+        # NOT: packet_num parametresi YOK! Bootloader kendi sayar.
+        packet = create_packet(CMD_UPDATE_APROM, 0, 0, chunk_data)
 
         print(f"[{packet_num}] Paket gonderiliyor... ({chunk_len} byte veri, offset: {data_offset})")
 
@@ -584,10 +606,10 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
             print(f"[X] Paket {packet_num} gonderilemedi")
             return False
 
-        # Yanit bekle (timeout yok - yanit gelene kadar bekliyor)
+        # Yanit bekle (timeout ile - flash yazma zaman alabilir)
         # ISP_UART: Her paket sonrasi WriteData() cagriliyor (~140-280ms)
-        # Her paket sonrasi mutlaka yanit geliyor - yanit gelene kadar bekliyor
-        response = receive_response(ser)  # Timeout yok - yanit gelene kadar bekliyor
+        # Her paket sonrasi mutlaka yanit geliyor, ama timeout ekliyoruz
+        response = receive_response(ser, timeout=5.0)  # 5 saniye timeout
         if response:
             # Paket numarasi: Byte 4-5'i oku (16-bit little-endian)
             resp_packet_no_raw = bytes_to_uint32(response, 4)
@@ -606,7 +628,25 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
                         # Bootloader'in gercek paket numarasini kullan ve takibi buna gore ayarla
                         expected_packet_no = resp_packet_no
                     else:
-                        print(f"  [!] Yanit: Paket No {resp_packet_no} (Beklenen: {expected_packet_no}, Checksum: 0x{checksum_resp:04X})")
+                        print(f"  [X] Paket numarasi uyumsuzlugu: {resp_packet_no} (Beklenen: {expected_packet_no})")
+                        print(f"  [!] CMD_RESEND_PACKET gonderiliyor...")
+                        # CMD_RESEND_PACKET gonder (bootloader son paketi tekrar yazar)
+                        resend_packet = create_packet(CMD_RESEND_PACKET)
+                        if send_packet(ser, resend_packet):
+                            time.sleep(0.2)
+                            resend_response = receive_response(ser, timeout=3.0)
+                            if resend_response:
+                                resend_packet_no = resend_response[4] | (resend_response[5] << 8)
+                                print(f"  [OK] CMD_RESEND_PACKET yaniti: Paket No {resend_packet_no}")
+                                expected_packet_no = resend_packet_no
+                            else:
+                                print(f"  [X] CMD_RESEND_PACKET yaniti alinamadi")
+                        else:
+                            print(f"  [X] CMD_RESEND_PACKET gonderilemedi")
+                        # Son paketi tekrar gonder
+                        data_offset -= chunk_len
+                        packet_num -= 1
+                        continue  # Döngüyü tekrarla
                 
                 # Bootloader her yanitta paket numarasini 2 artiriyor
                 expected_packet_no += 2
@@ -785,7 +825,7 @@ def main():
 
                     # Yanit var mi kontrol et
                     if ser.in_waiting >= 4:  # En az 4 byte yanit bekliyoruz
-                        response = receive_response(ser)  # Timeout yok - yanit gelene kadar bekliyor
+                        response = receive_response(ser, timeout=5.0)  # 5 saniye timeout
 
                         if response and len(response) >= 64:
                             # Yanitin bootloader'dan mi geldigini kontrol et
@@ -810,7 +850,7 @@ def main():
                             sync_packet = create_packet(CMD_SYNC_PACKNO, 1)  # Byte 8-11'de paket numarasi = 1
                             if send_packet(ser, sync_packet):
                                 time.sleep(0.1)
-                                sync_response = receive_response(ser)  # Timeout yok - yanit gelene kadar bekliyor
+                                sync_response = receive_response(ser, timeout=2.0)  # 2 saniye timeout
                                 if sync_response:
                                     sync_packet_no = bytes_to_uint32(sync_response, 4)
                                     print(f"  [OK] Paket numarasi senkronize edildi: {sync_packet_no}")
@@ -824,7 +864,7 @@ def main():
                             device_id_packet = create_packet(CMD_GET_DEVICEID)
                             if send_packet(ser, device_id_packet):
                                 time.sleep(0.15)
-                                device_response = receive_response(ser)  # Timeout yok - yanit gelene kadar bekliyor
+                                device_response = receive_response(ser, timeout=2.0)  # 2 saniye timeout
                                 if device_response and len(device_response) >= 64:
                                     device_id = bytes_to_uint32(device_response, 8)
                                     checksum_dev = (device_response[1] << 8) | device_response[0]
