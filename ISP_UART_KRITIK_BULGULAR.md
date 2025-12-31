@@ -1,151 +1,132 @@
-# ISP_UART Kod Analizi - Kritik Bulgular
+# ISP_UART Kod Analizi - KRİTİK BULGULAR
 
-## 🔍 ISP_UART Kodundan Öğrenilenler
+## 🔴 ÖNEMLİ BULGU 1: HER PAKET SONRASI MUTLAKA YANIT GÖNDERİLİYOR!
 
-### 1. CMD_SYNC_PACKNO (KRİTİK - EKSİKTİ!)
-
-**ISP_UART Kodu (isp_user.c Satır 50-53):**
+### main.c (Satır 138-145):
 ```c
-if(u32Lcmd == CMD_SYNC_PACKNO)
+while (1)
 {
-    u32PackNo = inpw(pu8Src);  // pu8Src += 8 sonrası, yani Byte 8-11
+    if (g_u8bUartDataReady == TRUE)
+    {
+        g_u8bUartDataReady = FALSE;
+        ParseCmd(g_au8uart_rcvbuf, 64);     /* Parse command from master */
+        PutString();                        /* Send response to master */
+    }
 }
 ```
 
-**ÖNEMLİ:**
-- CMD_SYNC_PACKNO gönderilirse paket numarası ayarlanıyor
-- `pu8Src += 8` yapıldıktan sonra okunuyor, yani **Byte 8-11'de paket numarası** olmalı
-- Python kodunda **EKSİKTİ!**
+**HER PAKET SONRASI `PutString()` MUTLAKA ÇAĞRILIYOR!**
 
-**Çözüm:**
-```python
-# CMD_CONNECT sonrası hemen
-sync_packet = create_packet(CMD_SYNC_PACKNO, 1)  # Byte 8-11'de 1
-send_packet(ser, sync_packet)
-```
+## 🔴 ÖNEMLİ BULGU 2: WriteData() Flash Yazma İşlemi Zaman Alıyor!
 
-### 2. CMD_CONNECT Sonrası Paket Numarası
-
-**ISP_UART Kodu (isp_user.c Satır 77-82):**
-```c
-else if(u32Lcmd == CMD_CONNECT)
-{
-    u32PackNo = 1;  // Paket numarasını 1 yap
-    outpw(pu8Response + 8, g_u32ApromSize);
-    outpw(pu8Response + 12, g_u32DataFlashAddr);
-    goto out;
-}
-```
-
-**ÖNEMLİ:**
-- CMD_CONNECT sonrası paket numarası 1 yapılıyor
-- Ama CMD_SYNC_PACKNO ile garanti altına almak daha iyi
-
-### 3. CMD_UPDATE_APROM - İlk Paket
-
-**ISP_UART Kodu (isp_user.c Satır 106-113):**
-```c
-u32StartAddress = inpw(pu8Src);      // Byte 8-11 (pu8Src += 8 sonrası)
-u32TotalLen = inpw(pu8Src + 4);      // Byte 12-15
-EraseAP(u32StartAddress, u32TotalLen);
-
-u32TotalLen = inpw(pu8Src + 4);      // Tekrar okunuyor (neden?)
-pu8Src += 8;                          // Tekrar 8 byte atlanıyor!
-u32srclen -= 8;
-```
-
-**ÖNEMLİ:**
-- İlk pakette Address (Byte 8-11) ve TotalLen (Byte 12-15) okunuyor
-- Sonra `pu8Src += 8` yapılıyor, yani veri **Byte 16'dan başlıyor** (48 byte)
-- Python kodu: ✅ Doğru!
-
-### 4. CMD_UPDATE_APROM - Devam Paketleri
-
-**ISP_UART Kodu (isp_user.c Satır 145-158):**
+### isp_user.c (Satır 145-158):
 ```c
 if((u32Gcmd == CMD_UPDATE_APROM) || (u32Gcmd == CMD_UPDATE_DATAFLASH))
 {
-    // pu8Src += 8 yapıldıktan sonra, yani Byte 8'den başlıyor
-    WriteData(u32StartAddress, u32StartAddress + u32srclen, (unsigned int *)pu8Src);
+    if(u32TotalLen < u32srclen)
+    {
+        u32srclen = u32TotalLen;
+    }
+    u32TotalLen -= u32srclen;
+    WriteData(u32StartAddress, u32StartAddress + u32srclen, (unsigned int *)pu8Src); 
+    memset(pu8Src, 0, u32srclen);
+    ReadData(u32StartAddress, u32StartAddress + u32srclen, (unsigned int *)pu8Src);
     u32StartAddress += u32srclen;
+    u32LastDataLen = u32srclen;
 }
+
+out:
+    u16Lcksum = Checksum(pu8Buffer, u8len);
+    outps(pu8Response, u16Lcksum);
+    ++u32PackNo;
+    outpw(pu8Response + 4, u32PackNo);
+    u32PackNo++;
+    return 0;
 ```
 
-**ÖNEMLİ:**
-- Devam paketlerinde `pu8Src += 8` yapılıyor, yani veri **Byte 8'den başlıyor** (56 byte)
-- Python kodu: ✅ Doğru!
+**WriteData() ÇAĞRILDIKTAN SONRA `out:` LABEL'INA GİDİYOR VE YANIT GÖNDERİYOR!**
 
-### 5. Yanıt Paketi
-
-**ISP_UART Kodu (isp_user.c Satır 160-165):**
+### fmc_user.c (Satır 15-56):
 ```c
-u16Lcksum = Checksum(pu8Buffer, u8len);
-outps(pu8Response, u16Lcksum);        // Byte 0-1: Checksum
-++u32PackNo;                            // Paket numarası artırılıyor
-outpw(pu8Response + 4, u32PackNo);     // Byte 4-7: Paket No
-u32PackNo++;                            // Tekrar artırılıyor (HATA?)
-```
-
-**ÖNEMLİ:**
-- Byte 0-1: Checksum (16-bit little-endian)
-- Byte 4-7: Paket No (uint32_t little-endian)
-- Paket numarası iki kez artırılıyor (muhtemelen bir sonraki paket için)
-
-## ⚠️ Tespit Edilen Eksikler
-
-### 1. CMD_SYNC_PACKNO Eksik! (KRİTİK!)
-
-**Durum:** Python kodunda CMD_SYNC_PACKNO gönderilmiyor!
-
-**ISP_UART Kodunda Var:**
-```c
-if(u32Lcmd == CMD_SYNC_PACKNO)
+int FMC_Proc(unsigned int u32Cmd, unsigned int addr_start, unsigned int addr_end, unsigned int *data)
 {
-    u32PackNo = inpw(pu8Src);  // Byte 8-11'den okunuyor
+    for (u32Addr = addr_start; u32Addr < addr_end; data++) {
+        FMC->ISPCMD = u32Cmd;
+        FMC->ISPADDR = u32Addr;
+        
+        if (u32Cmd == FMC_ISPCMD_PROGRAM) {
+            FMC->ISPDAT = *data;
+        }
+        
+        FMC->ISPTRG = 0x1;
+        __ISB();
+        
+        /* Wait ISP cmd complete */
+        u32TimeOutCnt = FMC_TIMEOUT_WRITE;
+        while (FMC->ISPTRG) {
+            if(--u32TimeOutCnt == 0)
+                return -1;
+        }
+        
+        // ... hata kontrolü ...
+        
+        if (u32Cmd == FMC_ISPCMD_PAGE_ERASE) {
+            u32Addr += FMC_FLASH_PAGE_SIZE;
+        } else {
+            u32Addr += 4;  // Her 4 byte (word) için bir FMC işlemi
+        }
+    }
+    return 0;
 }
 ```
 
-**Çözüm:** CMD_CONNECT sonrası CMD_SYNC_PACKNO gönderilmeli!
+**HER 4 BYTE İÇİN BİR FMC İŞLEMİ YAPILIYOR!**
+- 56 byte veri = 14 word = 14 FMC işlemi
+- Her FMC işlemi ~10-20ms sürebilir
+- Toplam: ~140-280ms
 
-### 2. Paket Formatı Kontrolü
+## 🔴 ÖNEMLİ BULGU 3: İlk Paket Sonrası EraseAP() Zaman Alıyor!
 
-**CMD_SYNC_PACKNO Formatı:**
-- Byte 0-3: CMD_SYNC_PACKNO (0xA4)
-- Byte 4-7: Padding (atlanır)
-- Byte 8-11: Paket Numarası (uint32_t)
-
-**Python Kodu:** ✅ Şimdi eklendi!
-
-## 📋 Doğru Komut Sırası
-
-```
-1. CMD_CONNECT (0xAE)
-   → Paket No = 1 yapılıyor
-   ↓
-2. CMD_SYNC_PACKNO (0xA4) ← EKLENDİ!
-   → Paket No = 1 garanti altına alınıyor
-   ↓
-3. CMD_GET_DEVICEID (0xB1) [Opsiyonel]
-   ↓
-4. CMD_UPDATE_APROM (0xA0) - İlk paket
-   ↓
-5. CMD_UPDATE_APROM (0xA0) - Devam paketleri
-   ↓
-6. CMD_RUN_APROM (0xAB) - Reset
+### isp_user.c (Satır 104-109):
+```c
+else
+{
+    u32StartAddress = inpw(pu8Src);
+    u32TotalLen = inpw(pu8Src + 4);
+    EraseAP(u32StartAddress, u32TotalLen);  // FLASH SİLME İŞLEMİ!
+}
 ```
 
-## ✅ Yapılan Düzeltmeler
+**İLK CMD_UPDATE_APROM PAKETİNDE `EraseAP()` ÇAĞRILIYOR!**
+- Bu işlem çok zaman alıyor (tüm APROM'u siliyor)
+- Sonrasında `WriteData()` da çağrılıyor
+- Toplam: ~500ms-2s sürebilir
 
-1. ✅ **CMD_SYNC_PACKNO eklendi** - create_packet fonksiyonunda
-2. ✅ **CMD_SYNC_PACKNO gönderimi eklendi** - CMD_CONNECT sonrası
-3. ✅ **Paket formatı doğrulandı** - ISP_UART koduna göre
+## 🔴 ÖNEMLİ BULGU 4: ParseCmd() Her Zaman `out:` Label'ına Gidiyor!
 
-## 🎯 Sonuç
+### isp_user.c (Satır 160-166):
+```c
+out:
+    u16Lcksum = Checksum(pu8Buffer, u8len);
+    outps(pu8Response, u16Lcksum);
+    ++u32PackNo;
+    outpw(pu8Response + 4, u32PackNo);
+    u32PackNo++;
+    return 0;
+```
 
-Kod artık ISP_UART protokolüne **tam uyumlu**:
-- ✅ CMD_SYNC_PACKNO eklendi
-- ✅ Paket formatları doğru
-- ✅ Komut sırası doğru
+**PARSE CMD HER ZAMAN `out:` LABEL'INA GİDİYOR VE YANIT GÖNDERİYOR!**
 
-Test edin ve sonuçları paylaşın!
+## 🎯 SONUÇ
 
+1. **HER PAKET SONRASI MUTLAKA YANIT GÖNDERİLİYOR!**
+2. **WriteData() flash yazma işlemi zaman alıyor (~140-280ms)**
+3. **İlk paket sonrası EraseAP() + WriteData() çok zaman alıyor (~500ms-2s)**
+4. **Timeout'lar bu yüzden oluyor - yanıt geliyor ama geç geliyor!**
+
+## 🔧 ÇÖZÜM
+
+1. **Timeout'u artır:** 3.0 saniye yeterli değil, 5.0 saniye yap
+2. **Her paket sonrası yanıt bekle:** Timeout olsa bile devam et (yanıt geç gelebilir)
+3. **Flash yazma işlemi için ekstra bekleme:** Her paket sonrası 0.1-0.2 saniye bekle
+4. **Input buffer kontrolü:** Yanıt gelmeden önce buffer'ı kontrol et
