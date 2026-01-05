@@ -129,3 +129,6 @@ Byte 16-63: data
 
 **Test edilmeli:** Önerilen formatı test et, çalışmıyorsa eski formata dön.
 
+
+
+

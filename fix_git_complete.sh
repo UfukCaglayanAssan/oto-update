@@ -40,3 +40,6 @@ echo "=== Tamamlandı ==="
 echo ""
 echo "Repository düzeltildi. Şimdi çalışıyor olmalı."
 
+
+
+

@@ -56,3 +56,6 @@ void ApplicationMain(void)
     // ... diğer işlemler ...
 }
 
+
+
+

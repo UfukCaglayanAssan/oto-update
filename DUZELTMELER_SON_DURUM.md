@@ -101,3 +101,6 @@ while(1);  // Trap
 - Yeni paket formatı (packno ile) bootloader tarafından kabul ediliyor mu?
 - Eğer çalışmıyorsa, bootloader farklı bir versiyon olabilir
 
+
+
+

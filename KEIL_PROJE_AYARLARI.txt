@@ -54,3 +54,6 @@ KEIL PROJESİ AYARLARI - LDROM ADRESİNE DERLEME
 - Handshake: 0x55 0x5A alır, 0xAA yanıt verir
 
 
+
+
+

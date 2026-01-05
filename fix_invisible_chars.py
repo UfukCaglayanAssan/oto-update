@@ -19,3 +19,6 @@ with open(filename, 'wb') as f:
 
 print(f"✓ {filename} temizlendi")
 
+
+
+

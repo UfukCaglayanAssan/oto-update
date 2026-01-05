@@ -83,7 +83,10 @@ int ParseCmd(uint8_t *pu8Buffer, uint8_t u8len)
     }
     else if(u32Lcmd == CMD_ERASE_ALL)
     {
-        EraseAP(FMC_APROM_BASE, g_u32ApromSize);
+        if(EraseAP(FMC_APROM_BASE, g_u32ApromSize) != 0)
+        {
+            /* Erase failed - continue anyway but flash may not be erased */
+        }
     }
 
     if((u32Lcmd == CMD_UPDATE_APROM) || (u32Lcmd == CMD_UPDATE_DATAFLASH))
@@ -94,7 +97,10 @@ int ParseCmd(uint8_t *pu8Buffer, uint8_t u8len)
 
             if(g_u32DataFlashSize)    
             {
-                EraseAP(g_u32DataFlashAddr, g_u32DataFlashSize);
+                if(EraseAP(g_u32DataFlashAddr, g_u32DataFlashSize) != 0)
+                {
+                    /* Erase failed - continue anyway but flash may not be erased */
+                }
             }
             else
             {
@@ -105,7 +111,10 @@ int ParseCmd(uint8_t *pu8Buffer, uint8_t u8len)
         {
             u32StartAddress = inpw(pu8Src);
             u32TotalLen = inpw(pu8Src + 4);
-            EraseAP(u32StartAddress, u32TotalLen);
+            if(EraseAP(u32StartAddress, u32TotalLen) != 0)
+            {
+                /* Erase failed - continue anyway but flash may not be erased */
+            }
         }
 
         u32TotalLen = inpw(pu8Src + 4);
@@ -132,7 +141,12 @@ int ParseCmd(uint8_t *pu8Buffer, uint8_t u8len)
 
         ReadData(u32PageAddress, u32StartAddress, (unsigned int *)g_u8ApromBuf);
         FMC_Erase_User(u32PageAddress);
-        WriteData(u32PageAddress, u32StartAddress, (unsigned int *)g_u8ApromBuf);
+        __disable_irq();
+        if(WriteData(u32PageAddress, u32StartAddress, (unsigned int *)g_u8ApromBuf) != 0)
+        {
+            /* Write failed - continue anyway */
+        }
+        __enable_irq();
 
         if((u32StartAddress % FMC_FLASH_PAGE_SIZE) >= (FMC_FLASH_PAGE_SIZE - u32LastDataLen))
         {
@@ -150,7 +164,12 @@ int ParseCmd(uint8_t *pu8Buffer, uint8_t u8len)
         }
 
         u32TotalLen -= u32srclen;
-        WriteData(u32StartAddress, u32StartAddress + u32srclen, (unsigned int *)pu8Src); 
+        __disable_irq();  // Disable interrupts during flash write
+        if(WriteData(u32StartAddress, u32StartAddress + u32srclen, (unsigned int *)pu8Src) != 0)
+        {
+            /* Write failed - continue anyway but flash may not be written */
+        }
+        __enable_irq();  // Re-enable interrupts
         memset(pu8Src, 0, u32srclen);
         ReadData(u32StartAddress, u32StartAddress + u32srclen, (unsigned int *)pu8Src);
         u32StartAddress += u32srclen;

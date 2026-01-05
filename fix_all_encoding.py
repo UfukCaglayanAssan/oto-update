@@ -53,3 +53,6 @@ except Exception as e:
         f.write(cleaned)
     print(f"✓ {filename} temizlendi (binary mod)")
 
+
+
+

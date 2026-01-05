@@ -350,32 +350,55 @@ def send_packet(ser, packet, retry=False):
         return False
 
 def receive_response(ser, timeout=None):
-    """64 byte yanit paketi alir (timeout yok - yanit gelene kadar bekliyor)
+    """64 byte yanit paketi alir
     
     Args:
         ser: Serial port nesnesi
-        timeout: None (timeout yok - yanit gelene kadar bekliyor)
+        timeout: None ise maksimum 30 saniye (flash yazma için yeterli)
     
     Returns:
-        bytes: 64 byte yanit paketi
+        bytes: 64 byte yanit paketi, veya None (timeout)
     
     NOT: Flash yazma islemi zaman alabilir, ama bootloader mutlaka yanit gonderir
+    Eger 30 saniye icinde yanit gelmezse, bootloader takilmis olabilir
     """
+    if timeout is None:
+        timeout = 30.0  # Maksimum 30 saniye (flash yazma için yeterli)
+    
     response = bytearray()
-    last_data_time = time.time()
+    start_time = time.time()
+    last_data_time = start_time
+    last_warning_time = start_time
     
     while len(response) < MAX_PKT_SIZE:
+        # Timeout kontrolu
+        elapsed = time.time() - start_time
+        if elapsed > timeout:
+            if len(response) > 0:
+                print(f"  [X] Timeout ({timeout:.1f}s): Kismi yanit alindi ({len(response)}/{MAX_PKT_SIZE} byte)")
+            else:
+                print(f"  [X] Timeout ({timeout:.1f}s): Yanit alinamadi")
+                print(f"      → Bootloader takilmis olabilir (flash yazma hatasi?)")
+                print(f"      → Karti reset yapip tekrar deneyin")
+            return None
+        
         if ser.in_waiting > 0:
             data = ser.read(min(ser.in_waiting, MAX_PKT_SIZE - len(response)))
             response.extend(data)
             last_data_time = time.time()
         else:
             # Veri yok, kisa bekle
-            # Eger uzun sure veri gelmiyorsa (30 saniye) uyari ver ama devam et
-            if time.time() - last_data_time > 30.0 and len(response) > 0:
-                print(f"  [!] Uzun sure veri gelmiyor ({len(response)}/{MAX_PKT_SIZE} byte), bekleniyor...")
-                last_data_time = time.time()  # Uyarıyı tekrar vermemek için
+            # Her 5 saniyede bir durum goster
+            if time.time() - last_warning_time > 5.0:
+                elapsed_total = time.time() - start_time
+                remaining = timeout - elapsed_total
+                print(f"  [BEKLEME] Yanit bekleniyor... ({elapsed_total:.1f}s / {timeout:.1f}s, {len(response)}/{MAX_PKT_SIZE} byte, kalan: {remaining:.1f}s)")
+                last_warning_time = time.time()
             time.sleep(0.01)
+    
+    elapsed = time.time() - start_time
+    if elapsed > 1.0:  # 1 saniyeden uzun surduyse bilgi ver
+        print(f"  [OK] Yanit alindi ({elapsed:.2f}s)")
     
     return bytes(response)
 
@@ -528,7 +551,7 @@ def send_connect(ser):
 def send_update_aprom(ser, bin_data, erase_before_update=True):
     """APROM guncellemesi yapar"""
     total_size = len(bin_data)
-    start_address = 0x00000000  # APROM baslangic adresi
+    start_address = 0x00001000  # APROM baslangic adresi (M263KI: LDROM 0x0000-0x1000, APROM 0x1000'den baslar)
 
     print(f"\n{'='*60}")
     print(f"APROM Guncelleme Baslatiliyor...")

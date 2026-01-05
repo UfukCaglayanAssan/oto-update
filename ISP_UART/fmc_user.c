@@ -115,10 +115,9 @@ void ReadData(unsigned int addr_start, unsigned int addr_end, unsigned int *data
     return;
 }
 
-void WriteData(unsigned int addr_start, unsigned int addr_end, unsigned int *data)  // Write data into flash
+int WriteData(unsigned int addr_start, unsigned int addr_end, unsigned int *data)  // Write data into flash
 {
-    FMC_Proc(FMC_ISPCMD_PROGRAM, addr_start, addr_end, data);
-    return;
+    return FMC_Proc(FMC_ISPCMD_PROGRAM, addr_start, addr_end, data);  // Return error code
 }
 
 int EraseAP(unsigned int addr_start, unsigned int size)

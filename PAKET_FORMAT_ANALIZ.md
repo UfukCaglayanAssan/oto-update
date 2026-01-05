@@ -81,3 +81,6 @@ WriteData(u32StartAddress, u32StartAddress + u32srclen, (unsigned int *)pu8Src);
 2. **Kontrol et:** Bootloader versiyonunu kontrol et (CMD_GET_FWVER)
 3. **İki formatı destekle:** Hem mevcut hem önerilen formatı destekleyen kod yaz
 
+
+
+

@@ -30,3 +30,6 @@ echo "   ✓ Pull tamamlandı"
 echo ""
 echo "=== Tamamlandı ==="
 
+
+
+

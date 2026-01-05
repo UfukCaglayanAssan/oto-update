@@ -36,3 +36,6 @@ else:
     print("  1. USB kablosu bağlı mı?")
     print("  2. lsusb komutu ile USB cihazları kontrol edin")
 
+
+
+
