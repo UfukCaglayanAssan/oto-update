@@ -31,6 +31,7 @@ static uint16_t Checksum(unsigned char *buf, int len)
 int ParseCmd(uint8_t *pu8Buffer, uint8_t u8len)
 {
     static uint32_t u32StartAddress, u32StartAddress_bak, u32TotalLen, u32TotalLen_bak, u32LastDataLen, u32PackNo = 1;
+    static uint32_t u32EraseAllDone = 0;  // Flag: CMD_ERASE_ALL yapıldı mı?
     uint32_t u32PageAddress;
     uint8_t *pu8Response;
     uint16_t u16Lcksum;
@@ -78,6 +79,7 @@ int ParseCmd(uint8_t *pu8Buffer, uint8_t u8len)
     else if(u32Lcmd == CMD_CONNECT)
     {
         u32PackNo = 1;
+        u32EraseAllDone = 0;  // Yeni bağlantıda flag'i sıfırla
         outpw(pu8Response + 8, g_u32ApromSize);
         outpw(pu8Response + 12, g_u32DataFlashAddr);
         goto out;
@@ -87,6 +89,10 @@ int ParseCmd(uint8_t *pu8Buffer, uint8_t u8len)
         if(EraseAP(FMC_APROM_BASE, g_u32ApromSize) != 0)
         {
             u32ErrorCode = 0x00000001;  // ERASE_ERROR
+        }
+        else
+        {
+            u32EraseAllDone = 1;  // Erase başarılı, flag set et
         }
     }
 
@@ -112,10 +118,16 @@ int ParseCmd(uint8_t *pu8Buffer, uint8_t u8len)
         {
             u32StartAddress = inpw(pu8Src);
             u32TotalLen = inpw(pu8Src + 4);
-            if(EraseAP(u32StartAddress, u32TotalLen) != 0)
+            // Eğer CMD_ERASE_ALL yapıldıysa, tekrar silme yapmaya gerek yok
+            if(u32EraseAllDone == 0)
             {
-                u32ErrorCode = 0x00000001;  // ERASE_ERROR
+                if(EraseAP(u32StartAddress, u32TotalLen) != 0)
+                {
+                    u32ErrorCode = 0x00000001;  // ERASE_ERROR
+                }
             }
+            // CMD_UPDATE_APROM başladığında flag'i sıfırla (bir sonraki güncelleme için)
+            u32EraseAllDone = 0;
         }
 
         u32TotalLen = inpw(pu8Src + 4);
