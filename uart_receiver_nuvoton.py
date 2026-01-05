@@ -551,7 +551,7 @@ def send_connect(ser):
 def send_update_aprom(ser, bin_data, erase_before_update=True):
     """APROM guncellemesi yapar"""
     total_size = len(bin_data)
-    start_address = 0x00001000  # APROM baslangic adresi (M263KI: LDROM 0x0000-0x1000, APROM 0x1000'den baslar)
+    start_address = 0x00000000  # APROM baslangic adresi (M263KI: APROM 0x00000000, LDROM 0x00100000)
 
     print(f"\n{'='*60}")
     print(f"APROM Guncelleme Baslatiliyor...")
@@ -574,6 +574,20 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
             if erase_response:
                 # DEBUG
                 print(f"  [DEBUG] CMD_ERASE_ALL yaniti (ilk 16 byte): {erase_response[:16].hex()}")
+                
+                # Hata kodu kontrolu (Byte 12-15)
+                error_code = bytes_to_uint32(erase_response, 12)
+                print(f"  [DEBUG] CMD_ERASE_ALL hata kodu (Byte 12-15): {erase_response[12:16].hex()} -> 0x{error_code:08X}")
+                if error_code != 0:
+                    if error_code == 0x00000001:
+                        print(f"  [X] FLASH ERASE HATASI! (Error Code: 0x{error_code:08X})")
+                        print(f"      → Flash silme basarisiz oldu")
+                        print(f"      → Guncelleme durduruluyor")
+                        return False
+                    else:
+                        print(f"  [X] BILINMEYEN HATA! (Error Code: 0x{error_code:08X})")
+                        print(f"      → Guncelleme durduruluyor")
+                        return False
                 
                 # Paket numarasi: Byte 4-5'i oku (16-bit little-endian)
                 erase_packet_no_raw = bytes_to_uint32(erase_response, 4)
@@ -609,6 +623,25 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
     if response:
         # DEBUG
         print(f"  [DEBUG] Ilk CMD_UPDATE_APROM yaniti (ilk 16 byte): {response[:16].hex()}")
+        
+        # Hata kodu kontrolu (Byte 12-15)
+        error_code = bytes_to_uint32(response, 12)
+        print(f"  [DEBUG] Hata kodu (Byte 12-15): {response[12:16].hex()} -> 0x{error_code:08X}")
+        if error_code != 0:
+            if error_code == 0x00000001:
+                print(f"  [X] FLASH ERASE HATASI! (Error Code: 0x{error_code:08X})")
+                print(f"      → Flash silme basarisiz oldu")
+                print(f"      → Guncelleme durduruluyor")
+                return False
+            elif error_code == 0x00000002:
+                print(f"  [X] FLASH WRITE HATASI! (Error Code: 0x{error_code:08X})")
+                print(f"      → Flash yazma basarisiz oldu")
+                print(f"      → Guncelleme durduruluyor")
+                return False
+            else:
+                print(f"  [X] BILINMEYEN HATA! (Error Code: 0x{error_code:08X})")
+                print(f"      → Guncelleme durduruluyor")
+                return False
         
         # Paket numarasi: Byte 4-5'i oku (16-bit little-endian)
         packet_no_raw = bytes_to_uint32(response, 4)
@@ -657,6 +690,25 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
             resp_packet_no_raw = bytes_to_uint32(response, 4)
             resp_packet_no = response[4] | (response[5] << 8)  # 16-bit little-endian
             checksum_resp = (response[1] << 8) | response[0]
+            
+            # Hata kodu kontrolu (Byte 12-15)
+            error_code = bytes_to_uint32(response, 12)
+            if error_code != 0:
+                print(f"  [DEBUG] Paket {packet_num} hata kodu (Byte 12-15): {response[12:16].hex()} -> 0x{error_code:08X}")
+                if error_code == 0x00000001:
+                    print(f"  [X] FLASH ERASE HATASI! (Error Code: 0x{error_code:08X})")
+                    print(f"      → Flash silme basarisiz oldu")
+                    print(f"      → Guncelleme durduruluyor")
+                    return False
+                elif error_code == 0x00000002:
+                    print(f"  [X] FLASH WRITE HATASI! (Error Code: 0x{error_code:08X})")
+                    print(f"      → Flash yazma basarisiz oldu (offset: {data_offset})")
+                    print(f"      → Guncelleme durduruluyor")
+                    return False
+                else:
+                    print(f"  [X] BILINMEYEN HATA! (Error Code: 0x{error_code:08X})")
+                    print(f"      → Guncelleme durduruluyor")
+                    return False
 
             # Paket numarasi kontrolu
             if expected_packet_no is not None:

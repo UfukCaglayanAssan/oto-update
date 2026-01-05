@@ -37,6 +37,7 @@ int ParseCmd(uint8_t *pu8Buffer, uint8_t u8len)
     uint32_t u32Lcmd, u32srclen, u32i;
     uint8_t *pu8Src;
     static uint32_t u32Gcmd;
+    uint32_t u32ErrorCode = 0;  // 0 = SUCCESS, non-zero = ERROR
     pu8Response = g_au8ResponseBuff;
     pu8Src = pu8Buffer;
     u32srclen = u8len;
@@ -85,7 +86,7 @@ int ParseCmd(uint8_t *pu8Buffer, uint8_t u8len)
     {
         if(EraseAP(FMC_APROM_BASE, g_u32ApromSize) != 0)
         {
-            /* Erase failed - continue anyway but flash may not be erased */
+            u32ErrorCode = 0x00000001;  // ERASE_ERROR
         }
     }
 
@@ -99,7 +100,7 @@ int ParseCmd(uint8_t *pu8Buffer, uint8_t u8len)
             {
                 if(EraseAP(g_u32DataFlashAddr, g_u32DataFlashSize) != 0)
                 {
-                    /* Erase failed - continue anyway but flash may not be erased */
+                    u32ErrorCode = 0x00000001;  // ERASE_ERROR
                 }
             }
             else
@@ -113,7 +114,7 @@ int ParseCmd(uint8_t *pu8Buffer, uint8_t u8len)
             u32TotalLen = inpw(pu8Src + 4);
             if(EraseAP(u32StartAddress, u32TotalLen) != 0)
             {
-                /* Erase failed - continue anyway but flash may not be erased */
+                u32ErrorCode = 0x00000001;  // ERASE_ERROR
             }
         }
 
@@ -144,7 +145,7 @@ int ParseCmd(uint8_t *pu8Buffer, uint8_t u8len)
         __disable_irq();
         if(WriteData(u32PageAddress, u32StartAddress, (unsigned int *)g_u8ApromBuf) != 0)
         {
-            /* Write failed - continue anyway */
+            u32ErrorCode = 0x00000002;  // WRITE_ERROR
         }
         __enable_irq();
 
@@ -167,7 +168,7 @@ int ParseCmd(uint8_t *pu8Buffer, uint8_t u8len)
         __disable_irq();  // Disable interrupts during flash write
         if(WriteData(u32StartAddress, u32StartAddress + u32srclen, (unsigned int *)pu8Src) != 0)
         {
-            /* Write failed - continue anyway but flash may not be written */
+            u32ErrorCode = 0x00000002;  // WRITE_ERROR
         }
         __enable_irq();  // Re-enable interrupts
         memset(pu8Src, 0, u32srclen);
@@ -181,6 +182,7 @@ out:
     outps(pu8Response, u16Lcksum);
     ++u32PackNo;
     outpw(pu8Response + 4, u32PackNo);
+    outpw(pu8Response + 12, u32ErrorCode);  // Error code at byte 12-15
     u32PackNo++;
     return 0;
 }
