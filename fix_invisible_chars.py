@@ -22,3 +22,4 @@ print(f"✓ {filename} temizlendi")
 
 
 
+

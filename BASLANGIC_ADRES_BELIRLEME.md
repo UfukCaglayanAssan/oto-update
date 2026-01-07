@@ -187,3 +187,4 @@ send_update_aprom(ser, bin_data, start_address=0x00001000)
 
 **Her şey doğru çalışıyor!** ✅
 
+

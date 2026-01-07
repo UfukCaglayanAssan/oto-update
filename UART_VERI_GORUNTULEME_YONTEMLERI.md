@@ -206,3 +206,4 @@ python3 uart_receiver_nuvoton.py /dev/ttyACM0 NuvotonM26x-Bootloader-Test.bin
 - Profesyonel debug
 
 
+

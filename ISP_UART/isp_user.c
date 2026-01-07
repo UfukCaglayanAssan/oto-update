@@ -38,7 +38,7 @@ int ParseCmd(uint8_t *pu8Buffer, uint8_t u8len)
     uint32_t u32Lcmd, u32srclen, u32i;
     uint8_t *pu8Src;
     static uint32_t u32Gcmd;
-    uint32_t u32ErrorCode = 0;  // 0 = SUCCESS, non-zero = ERROR
+    static uint32_t u32ErrorCode = 0;  // 0 = SUCCESS, non-zero = ERROR (static to persist across packets)
     pu8Response = g_au8ResponseBuff;
     pu8Src = pu8Buffer;
     u32srclen = u8len;
@@ -80,6 +80,7 @@ int ParseCmd(uint8_t *pu8Buffer, uint8_t u8len)
     {
         u32PackNo = 1;
         u32EraseAllDone = 0;  // Yeni bağlantıda flag'i sıfırla
+        u32ErrorCode = 0;  // Yeni bağlantıda error code'u sıfırla
         outpw(pu8Response + 8, g_u32ApromSize);
         outpw(pu8Response + 12, g_u32DataFlashAddr);
         goto out;
@@ -101,6 +102,7 @@ int ParseCmd(uint8_t *pu8Buffer, uint8_t u8len)
         if(u32Lcmd == CMD_UPDATE_DATAFLASH)
         {
             u32StartAddress = g_u32DataFlashAddr;
+            u32TotalLen = g_u32DataFlashSize;  // CMD_UPDATE_DATAFLASH için TotalLen set et
 
             if(g_u32DataFlashSize)    
             {
@@ -116,23 +118,32 @@ int ParseCmd(uint8_t *pu8Buffer, uint8_t u8len)
         }
         else
         {
-            u32StartAddress = inpw(pu8Src);
-            u32TotalLen = inpw(pu8Src + 4);
-            // Eğer CMD_ERASE_ALL yapıldıysa, tekrar silme yapmaya gerek yok
-            if(u32EraseAllDone == 0)
+            // İlk paket mi kontrol et (önceki komut CMD_UPDATE_APROM değilse, bu ilk pakettir)
+            if(u32Gcmd != CMD_UPDATE_APROM)
             {
-                if(EraseAP(u32StartAddress, u32TotalLen) != 0)
+                // İLK PAKET: Address ve TotalSize oku, silme yap
+                u32StartAddress = inpw(pu8Src);
+                u32TotalLen = inpw(pu8Src + 4);
+                // Eğer CMD_ERASE_ALL yapıldıysa, tekrar silme yapmaya gerek yok
+                if(u32EraseAllDone == 0)
                 {
-                    u32ErrorCode = 0x00000001;  // ERASE_ERROR
+                    if(EraseAP(u32StartAddress, u32TotalLen) != 0)
+                    {
+                        u32ErrorCode = 0x00000001;  // ERASE_ERROR
+                    }
                 }
+                // CMD_UPDATE_APROM başladığında flag'i sıfırla (bir sonraki güncelleme için)
+                u32EraseAllDone = 0;
+                // İlk pakette Address+TotalSize atlanıyor (8 byte)
+                pu8Src += 8;
+                u32srclen -= 8;
             }
-            // CMD_UPDATE_APROM başladığında flag'i sıfırla (bir sonraki güncelleme için)
-            u32EraseAllDone = 0;
+            else
+            {
+                // SONRAKI PAKETLER: Address ve TotalSize zaten okunmuş, sadece DATA var
+                // Burada silme yapma! pu8Src zaten DATA'ya işaret ediyor
+            }
         }
-
-        u32TotalLen = inpw(pu8Src + 4);
-        pu8Src += 8;
-        u32srclen -= 8;
         u32StartAddress_bak = u32StartAddress;
         u32TotalLen_bak = u32TotalLen;
     }
@@ -143,6 +154,13 @@ int ParseCmd(uint8_t *pu8Buffer, uint8_t u8len)
     }
     else if(u32Lcmd == CMD_RESEND_PACKET)      /* for APROM and Data flash only */
     {
+        // u32LastDataLen kontrolü: Eğer 0 ise veya güncelleme başlamamışsa hata
+        if(u32LastDataLen == 0 || (u32Gcmd != CMD_UPDATE_APROM && u32Gcmd != CMD_UPDATE_DATAFLASH))
+        {
+            u32ErrorCode = 0x00000003;  // RESEND_ERROR: Geçersiz resend isteği
+            goto out;
+        }
+        
         u32StartAddress -= u32LastDataLen;
         u32TotalLen += u32LastDataLen;
         u32PageAddress = u32StartAddress & (0x100000 - FMC_FLASH_PAGE_SIZE);
@@ -171,6 +189,13 @@ int ParseCmd(uint8_t *pu8Buffer, uint8_t u8len)
 
     if((u32Gcmd == CMD_UPDATE_APROM) || (u32Gcmd == CMD_UPDATE_DATAFLASH))
     {
+        // Eğer önceki pakette hata varsa (ERASE_ERROR veya WRITE_ERROR), devam etme
+        if(u32ErrorCode != 0)
+        {
+            // Hata var, yazma yapma - sadece response gönder
+            goto out;
+        }
+        
         if(u32TotalLen < u32srclen)
         {
             u32srclen = u32TotalLen; /* prevent last package from over writing */
@@ -195,7 +220,7 @@ out:
     ++u32PackNo;
     outpw(pu8Response + 4, u32PackNo);
     outpw(pu8Response + 12, u32ErrorCode);  // Error code at byte 12-15
-    u32PackNo++;
+    // u32PackNo zaten artırıldı, tekrar artırmaya gerek yok
     return 0;
 }
 

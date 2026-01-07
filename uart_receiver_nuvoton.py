@@ -565,12 +565,10 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
         erase_packet = create_packet(CMD_ERASE_ALL)
         if send_packet(ser, erase_packet):
             print(f"[OK] CMD_ERASE_ALL gonderildi")
-            # Silme islemi zaman alir
-            time.sleep(2.0)  # Flash silme icin yeterli sure
-            # Input buffer'da veri var mi kontrol et
-            if ser.in_waiting > 0:
-                print(f"  Input buffer: {ser.in_waiting} byte bekliyor")
-            erase_response = receive_response(ser)  # Timeout yok - flash silme zaman alabilir, yanit gelene kadar bekliyor
+            # Yanit bekle (timeout yok - flash silme zaman alabilir)
+            # ISP_UART: EraseAP() senkron, response gönderilmeden önce silme bitiyor
+            # receive_response() response gelene kadar bekliyor (~500ms-2s)
+            erase_response = receive_response(ser)  # Timeout yok - yanit gelene kadar bekliyor
             if erase_response:
                 # DEBUG
                 print(f"  [DEBUG] CMD_ERASE_ALL yaniti (ilk 16 byte): {erase_response[:16].hex()}")

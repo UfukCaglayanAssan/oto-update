@@ -209,3 +209,4 @@ Python script'in yanıtları **ISP_UART bootloader koduna %100 uyumlu!**
 
 **Hiçbir sorun yok, her şey doğru çalışıyor!** ✅
 
+

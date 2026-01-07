@@ -80,3 +80,4 @@ print("   - USB-to-UART dönüştürücü kullanın")
 
 
 
+
