@@ -727,48 +727,46 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
                 print(f"  [X] BILINMEYEN HATA! (Error Code: 0x{error_code:08X})")
                 print(f"      → Guncelleme durduruluyor")
                 return False
-
-            # Paket numarasi kontrolu
-            if expected_packet_no is not None:
-                if resp_packet_no == expected_packet_no:
-                    print(f"  [OK] Yanit: Paket No {resp_packet_no} (Checksum: 0x{checksum_resp:04X})")
-                else:
-                    # Paket numarasi uyumsuzlugu
-                    diff = resp_packet_no - expected_packet_no
-                    if abs(diff) <= 4:
-                        print(f"  [!] Yanit: Paket No {resp_packet_no} (Beklenen: {expected_packet_no}, Fark: {diff:+d})")
-                        # Bootloader'in gercek paket numarasini kullan ve takibi buna gore ayarla
-                        expected_packet_no = resp_packet_no
-                    else:
-                        print(f"  [X] Paket numarasi uyumsuzlugu: {resp_packet_no} (Beklenen: {expected_packet_no})")
-                        print(f"  [!] CMD_RESEND_PACKET gonderiliyor...")
-                        # CMD_RESEND_PACKET gonder (bootloader son paketi tekrar yazar)
-                        resend_packet = create_packet(CMD_RESEND_PACKET)
-                        if send_packet(ser, resend_packet):
-                            time.sleep(0.2)
-                            resend_response = receive_response(ser)  # Timeout yok - yanit gelene kadar bekliyor
-                            if resend_response:
-                                resend_packet_no = resend_response[4] | (resend_response[5] << 8)
-                                print(f"  [OK] CMD_RESEND_PACKET yaniti: Paket No {resend_packet_no}")
-                                expected_packet_no = resend_packet_no
-                            else:
-                                print(f"  [X] CMD_RESEND_PACKET yaniti alinamadi")
-                        else:
-                            print(f"  [X] CMD_RESEND_PACKET gonderilemedi")
-                        # Son paketi tekrar gonder
-                        data_offset -= chunk_len
-                        packet_num -= 1
-                        continue  # Döngüyü tekrarla
-                
-                # Bootloader her yanitta paket numarasini 2 artiriyor
-                expected_packet_no += 2
-            else:
-                # Paket numarasi takibi yapilmiyor, sadece goster
+        
+        # Hata yoksa paket numarasi kontrolu yap
+        if expected_packet_no is not None:
+            if resp_packet_no == expected_packet_no:
                 print(f"  [OK] Yanit: Paket No {resp_packet_no} (Checksum: 0x{checksum_resp:04X})")
+            else:
+                # Paket numarasi uyumsuzlugu
+                diff = resp_packet_no - expected_packet_no
+                if abs(diff) <= 4:
+                    print(f"  [!] Yanit: Paket No {resp_packet_no} (Beklenen: {expected_packet_no}, Fark: {diff:+d})")
+                    # Bootloader'in gercek paket numarasini kullan ve takibi buna gore ayarla
+                    expected_packet_no = resp_packet_no
+                else:
+                    print(f"  [X] Paket numarasi uyumsuzlugu: {resp_packet_no} (Beklenen: {expected_packet_no})")
+                    print(f"  [!] CMD_RESEND_PACKET gonderiliyor...")
+                    # CMD_RESEND_PACKET gonder (bootloader son paketi tekrar yazar)
+                    resend_packet = create_packet(CMD_RESEND_PACKET)
+                    if send_packet(ser, resend_packet):
+                        time.sleep(0.2)
+                        resend_response = receive_response(ser)  # Timeout yok - yanit gelene kadar bekliyor
+                        if resend_response:
+                            resend_packet_no = resend_response[4] | (resend_response[5] << 8)
+                            print(f"  [OK] CMD_RESEND_PACKET yaniti: Paket No {resend_packet_no}")
+                            expected_packet_no = resend_packet_no
+                        else:
+                            print(f"  [X] CMD_RESEND_PACKET yaniti alinamadi")
+                            return False
+                    else:
+                        print(f"  [X] CMD_RESEND_PACKET gonderilemedi")
+                        return False
+                    # Son paketi tekrar gonder
+                    data_offset -= chunk_len
+                    packet_num -= 1
+                    continue  # Döngüyü tekrarla
+            
+            # Bootloader her yanitta paket numarasini 2 artiriyor
+            expected_packet_no += 2
         else:
-            # Yanit alinamadi (timeout) - flash yazma devam ediyor olabilir
-            print(f"  [!] Yanit alinamadi (timeout) - flash yazma devam ediyor olabilir")
-            # Timeout olsa bile devam et (bootloader flash yaziyor olabilir)
+            # Paket numarasi takibi yapilmiyor, sadece goster
+            print(f"  [OK] Yanit: Paket No {resp_packet_no} (Checksum: 0x{checksum_resp:04X})")
 
         data_offset += chunk_len
         packet_num += 1
