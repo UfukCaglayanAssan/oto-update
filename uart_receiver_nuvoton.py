@@ -354,33 +354,31 @@ def receive_response(ser, timeout=None):
     
     Args:
         ser: Serial port nesnesi
-        timeout: None ise maksimum 30 saniye (flash yazma için yeterli)
+        timeout: None ise timeout yok, cevap gelene kadar bekler
     
     Returns:
-        bytes: 64 byte yanit paketi, veya None (timeout)
+        bytes: 64 byte yanit paketi, veya None (sadece timeout verilmişse)
     
-    NOT: Flash yazma islemi zaman alabilir, ama bootloader mutlaka yanit gonderir
-    Eger 30 saniye icinde yanit gelmezse, bootloader takilmis olabilir
+    NOT: Flash yazma islemi zaman alabilir, bootloader mutlaka yanit gonderir
+    Timeout None ise cevap gelene kadar bekler (sonsuz bekleyebilir)
     """
-    if timeout is None:
-        timeout = 30.0  # Maksimum 30 saniye (flash yazma için yeterli)
-    
     response = bytearray()
     start_time = time.time()
     last_data_time = start_time
     last_warning_time = start_time
     
     while len(response) < MAX_PKT_SIZE:
-        # Timeout kontrolu
-        elapsed = time.time() - start_time
-        if elapsed > timeout:
-            if len(response) > 0:
-                print(f"  [X] Timeout ({timeout:.1f}s): Kismi yanit alindi ({len(response)}/{MAX_PKT_SIZE} byte)")
-            else:
-                print(f"  [X] Timeout ({timeout:.1f}s): Yanit alinamadi")
-                print(f"      → Bootloader takilmis olabilir (flash yazma hatasi?)")
-                print(f"      → Karti reset yapip tekrar deneyin")
-            return None
+        # Timeout kontrolu (sadece timeout verilmişse)
+        if timeout is not None:
+            elapsed = time.time() - start_time
+            if elapsed > timeout:
+                if len(response) > 0:
+                    print(f"  [X] Timeout ({timeout:.1f}s): Kismi yanit alindi ({len(response)}/{MAX_PKT_SIZE} byte)")
+                else:
+                    print(f"  [X] Timeout ({timeout:.1f}s): Yanit alinamadi")
+                    print(f"      → Bootloader takilmis olabilir (flash yazma hatasi?)")
+                    print(f"      → Karti reset yapip tekrar deneyin")
+                return None
         
         if ser.in_waiting > 0:
             data = ser.read(min(ser.in_waiting, MAX_PKT_SIZE - len(response)))
@@ -391,8 +389,11 @@ def receive_response(ser, timeout=None):
             # Her 5 saniyede bir durum goster
             if time.time() - last_warning_time > 5.0:
                 elapsed_total = time.time() - start_time
-                remaining = timeout - elapsed_total
-                print(f"  [BEKLEME] Yanit bekleniyor... ({elapsed_total:.1f}s / {timeout:.1f}s, {len(response)}/{MAX_PKT_SIZE} byte, kalan: {remaining:.1f}s)")
+                if timeout is not None:
+                    remaining = timeout - elapsed_total
+                    print(f"  [BEKLEME] Yanit bekleniyor... ({elapsed_total:.1f}s / {timeout:.1f}s, {len(response)}/{MAX_PKT_SIZE} byte, kalan: {remaining:.1f}s)")
+                else:
+                    print(f"  [BEKLEME] Yanit bekleniyor... ({elapsed_total:.1f}s, {len(response)}/{MAX_PKT_SIZE} byte) - timeout yok, bekleniyor...")
                 last_warning_time = time.time()
             time.sleep(0.01)
     
@@ -617,49 +618,57 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
     # ISP_UART: Ilk paket sonrasi EraseAP() + WriteData() cagriliyor
     # EraseAP() ~500ms-2s, WriteData() ~140-280ms
     # Toplam: ~640ms-2.3s - yanit gelene kadar bekliyor
+    print(f"[BEKLEME] Ilk paket yaniti bekleniyor (silme + yazma islemi devam ediyor olabilir)...")
     response = receive_response(ser)  # Timeout yok - yanit gelene kadar bekliyor
-    if response:
-        # DEBUG
-        print(f"  [DEBUG] Ilk CMD_UPDATE_APROM yaniti (ilk 16 byte): {response[:16].hex()}")
-        
-        # Hata kodu kontrolu (Byte 12-15)
-        error_code = bytes_to_uint32(response, 12)
-        print(f"  [DEBUG] Hata kodu (Byte 12-15): {response[12:16].hex()} -> 0x{error_code:08X}")
-        if error_code != 0:
-            if error_code == 0x00000001:
-                print(f"  [X] FLASH ERASE HATASI! (Error Code: 0x{error_code:08X})")
-                print(f"      → Flash silme basarisiz oldu")
-                print(f"      → Guncelleme durduruluyor")
-                return False
-            elif error_code == 0x00000002:
-                print(f"  [X] FLASH WRITE HATASI! (Error Code: 0x{error_code:08X})")
-                print(f"      → Flash yazma basarisiz oldu")
-                print(f"      → Guncelleme durduruluyor")
-                return False
-            else:
-                print(f"  [X] BILINMEYEN HATA! (Error Code: 0x{error_code:08X})")
-                print(f"      → Guncelleme durduruluyor")
-                return False
-        
-        # Paket numarasi: Byte 4-5'i oku (16-bit little-endian)
-        packet_no_raw = bytes_to_uint32(response, 4)
-        packet_no = response[4] | (response[5] << 8)  # 16-bit little-endian
-        print(f"  [DEBUG] Byte 4-7 (Paket No): {response[4:8].hex()} -> Raw: {packet_no_raw}, Normalized: {packet_no}")
-        
-        print(f"[OK] Yanit alindi, Paket No: {packet_no}")
-        # NOT: Bootloader paket numarasini her yanitta 2 artiriyor
-        # CMD_ERASE_ALL sonrasi: 6
-        # Ilk CMD_UPDATE_APROM sonrasi: 8 (beklenen)
-        # Ilk yanit paket numarasini kullanarak devam paketleri icin beklenen degeri hesapla
-        first_response_packet_no = packet_no
-        # Sonraki paket icin beklenen deger: ilk yanit + 2
-        expected_packet_no = first_response_packet_no + 2
-        print(f"  Sonraki paket icin beklenen: {expected_packet_no}")
-    else:
-        print(f"[!] Ilk paket yaniti alinamadi (devam ediliyor)")
-        # Ilk yanit alinamadi, varsayilan deger kullan
-        expected_packet_no = 10  # CMD_ERASE_ALL=6, ilk UPDATE=8, ilk devam=10
-        first_response_packet_no = None
+    
+    if response is None:
+        print(f"[X] Ilk paket yaniti alinamadi (timeout)")
+        print(f"    → Bootloader takilmis olabilir veya silme islemi cok uzun suruyor")
+        print(f"    → Guncelleme durduruluyor")
+        return False
+    
+    if len(response) < 64:
+        print(f"[X] Ilk paket yaniti eksik ({len(response)}/64 byte)")
+        print(f"    → Guncelleme durduruluyor")
+        return False
+    
+    # DEBUG
+    print(f"  [DEBUG] Ilk CMD_UPDATE_APROM yaniti (ilk 16 byte): {response[:16].hex()}")
+    
+    # Hata kodu kontrolu (Byte 12-15) - ONEMLI: Ilk kontrol edilmeli!
+    error_code = bytes_to_uint32(response, 12)
+    print(f"  [DEBUG] Hata kodu (Byte 12-15): {response[12:16].hex()} -> 0x{error_code:08X}")
+    
+    if error_code != 0:
+        if error_code == 0x00000001:
+            print(f"  [X] FLASH ERASE HATASI! (Error Code: 0x{error_code:08X})")
+            print(f"      → Flash silme basarisiz oldu")
+            print(f"      → Guncelleme durduruluyor")
+            return False
+        elif error_code == 0x00000002:
+            print(f"  [X] FLASH WRITE HATASI! (Error Code: 0x{error_code:08X})")
+            print(f"      → Flash yazma basarisiz oldu")
+            print(f"      → Guncelleme durduruluyor")
+            return False
+        else:
+            print(f"  [X] BILINMEYEN HATA! (Error Code: 0x{error_code:08X})")
+            print(f"      → Guncelleme durduruluyor")
+            return False
+    
+    # Paket numarasi: Byte 4-5'i oku (16-bit little-endian)
+    packet_no_raw = bytes_to_uint32(response, 4)
+    packet_no = response[4] | (response[5] << 8)  # 16-bit little-endian
+    print(f"  [DEBUG] Byte 4-7 (Paket No): {response[4:8].hex()} -> Raw: {packet_no_raw}, Normalized: {packet_no}")
+    
+    print(f"[OK] Ilk paket yaniti alindi, Paket No: {packet_no}, Hata Kodu: 0x{error_code:08X} (OK)")
+    # NOT: Bootloader paket numarasini her yanitta 2 artiriyor
+    # CMD_ERASE_ALL sonrasi: 6
+    # Ilk CMD_UPDATE_APROM sonrasi: 8 (beklenen)
+    # Ilk yanit paket numarasini kullanarak devam paketleri icin beklenen degeri hesapla
+    first_response_packet_no = packet_no
+    # Sonraki paket icin beklenen deger: ilk yanit + 2
+    expected_packet_no = first_response_packet_no + 2
+    print(f"  Sonraki paket icin beklenen: {expected_packet_no}")
 
     # Devam paketleri (56 byte veri her pakette)
     data_offset = 48  # Ilk pakette 48 byte gonderildi
@@ -683,30 +692,41 @@ def send_update_aprom(ser, bin_data, erase_before_update=True):
         # ISP_UART: Her paket sonrasi WriteData() cagriliyor (~140-280ms)
         # Her paket sonrasi mutlaka yanit geliyor - yanit gelene kadar bekliyor
         response = receive_response(ser)  # Timeout yok - yanit gelene kadar bekliyor
-        if response:
-            # Paket numarasi: Byte 4-5'i oku (16-bit little-endian)
-            resp_packet_no_raw = bytes_to_uint32(response, 4)
-            resp_packet_no = response[4] | (response[5] << 8)  # 16-bit little-endian
-            checksum_resp = (response[1] << 8) | response[0]
-            
-            # Hata kodu kontrolu (Byte 12-15)
-            error_code = bytes_to_uint32(response, 12)
-            if error_code != 0:
-                print(f"  [DEBUG] Paket {packet_num} hata kodu (Byte 12-15): {response[12:16].hex()} -> 0x{error_code:08X}")
-                if error_code == 0x00000001:
-                    print(f"  [X] FLASH ERASE HATASI! (Error Code: 0x{error_code:08X})")
-                    print(f"      → Flash silme basarisiz oldu")
-                    print(f"      → Guncelleme durduruluyor")
-                    return False
-                elif error_code == 0x00000002:
-                    print(f"  [X] FLASH WRITE HATASI! (Error Code: 0x{error_code:08X})")
-                    print(f"      → Flash yazma basarisiz oldu (offset: {data_offset})")
-                    print(f"      → Guncelleme durduruluyor")
-                    return False
-                else:
-                    print(f"  [X] BILINMEYEN HATA! (Error Code: 0x{error_code:08X})")
-                    print(f"      → Guncelleme durduruluyor")
-                    return False
+        
+        if response is None:
+            print(f"  [X] Paket {packet_num} yaniti alinamadi (timeout)")
+            print(f"      → Bootloader takilmis olabilir")
+            print(f"      → Guncelleme durduruluyor")
+            return False
+        
+        if len(response) < 64:
+            print(f"  [X] Paket {packet_num} yaniti eksik ({len(response)}/64 byte)")
+            print(f"      → Guncelleme durduruluyor")
+            return False
+        
+        # Paket numarasi: Byte 4-5'i oku (16-bit little-endian)
+        resp_packet_no_raw = bytes_to_uint32(response, 4)
+        resp_packet_no = response[4] | (response[5] << 8)  # 16-bit little-endian
+        checksum_resp = (response[1] << 8) | response[0]
+        
+        # Hata kodu kontrolu (Byte 12-15) - ONEMLI: Ilk kontrol edilmeli!
+        error_code = bytes_to_uint32(response, 12)
+        if error_code != 0:
+            print(f"  [DEBUG] Paket {packet_num} hata kodu (Byte 12-15): {response[12:16].hex()} -> 0x{error_code:08X}")
+            if error_code == 0x00000001:
+                print(f"  [X] FLASH ERASE HATASI! (Error Code: 0x{error_code:08X})")
+                print(f"      → Flash silme basarisiz oldu (muhtemelen ilk pakette)")
+                print(f"      → Guncelleme durduruluyor")
+                return False
+            elif error_code == 0x00000002:
+                print(f"  [X] FLASH WRITE HATASI! (Error Code: 0x{error_code:08X})")
+                print(f"      → Flash yazma basarisiz oldu (offset: {data_offset})")
+                print(f"      → Guncelleme durduruluyor")
+                return False
+            else:
+                print(f"  [X] BILINMEYEN HATA! (Error Code: 0x{error_code:08X})")
+                print(f"      → Guncelleme durduruluyor")
+                return False
 
             # Paket numarasi kontrolu
             if expected_packet_no is not None:
